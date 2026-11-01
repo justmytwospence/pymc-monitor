@@ -19,7 +19,7 @@ NumPy is capped below 2.5 because the older PyTensor/Numba pair used by PyMC 5 c
 | Sampler | Live progress | Adaptive stop | External stop |
 |---|---|---|---|
 | `pymc` | Per-chain draws and diagnostics | Yes | Cooperative callback interrupt |
-| `nutpie` | Native background progress and `inspect()` | Yes | `abort()` recovers partial draws |
+| `nutpie` | Native callback when supported; otherwise throttled `inspect()` snapshots | Yes | `abort()` recovers partial draws |
 | `numpyro`, `blackjax` | Phase only; final diagnostics | Rejected | Waits for kernel completion |
 
 When omitted, `nuts_sampler` selects nutpie if installed for a continuous model, otherwise native PyMC. A user callback, custom `step`, or discrete free variable selects native PyMC. An explicit sampler is never silently replaced. Install `[jax]` for both JAX sampler libraries. JAX dispatch is tested with an injected sampler; no live per-draw JAX support is claimed.
@@ -27,6 +27,8 @@ When omitted, `nuts_sampler` selects nutpie if installed for a continuous model,
 Defaults are 1000 posterior draws and `max(2, cores)` chains (with at most four default cores). Warmup is 400 for nutpie with PyMC 6, otherwise 1000. Explicit valid `draws`, `tune`, and `chains` are preserved. Nutpie requires at least one warmup draw; native PyMC permits `tune=0`. Use explicit seeds and sampler names for reproducibility.
 
 Native callbacks receive `trace` and `draw` exactly as in PyMC; monitoring composes with them. `KeyboardInterrupt` from a callback requests a stop. Other callback or sampler errors propagate. `initial_strategy="prior"` and `"support_point"` choose PyMC initial points; do not combine this with explicit `initvals`.
+
+The `nutpie>=0.13` dependency lower bound does not imply a callback API: nutpie 0.16.8 (used on Python 3.11) accepts `**kwargs` but not `progress_callback`. The monitor detects an explicit keyword-capable callback parameter before starting any handles. Without it, it polls each unfinished handle's `inspect()` at most once every 0.5 seconds, preserving live progress and adaptive checkpoints. Snapshot progress counts only finite post-warmup draws in every requested chain, excluding NaN padding; warmup progress is shown only when saved warmup data is available. Before that, progress is indeterminate, and unavailable display statistics appear as `--`. The final progress update uses recovered traces even if a run finishes before the first snapshot.
 
 Nutpie accepts native sampler settings including `target_accept`, `maxdepth` (or `max_treedepth`), `adaptation`, and `cores`. `nuts_sampler_kwargs` can group those settings. `compile_kwargs` go to `nutpie.compile_pymc_model`. Unsupported options raise rather than being ignored. Custom trace backends are not supported, because balanced partial-trace recovery depends on the standard PyMC trace.
 

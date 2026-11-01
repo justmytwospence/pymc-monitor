@@ -38,19 +38,19 @@ class PhaseUpdate:
 class ChainProgress:
     draw: int
     total: int
-    phase: str  # "tuning" | "sampling" | "done"
-    draws_per_sec: float = 0.0
-    eta_seconds: float = 0.0
-    divergences: int = 0
-    mean_tree_depth: float = 0.0
-    step_size: float = 0.0
-    tree_size: int = 0  # grad evals (leapfrog steps)
+    phase: str  # "indeterminate" | "tuning" | "sampling" | "done"
+    draws_per_sec: float | None = 0.0
+    eta_seconds: float | None = 0.0
+    divergences: int | None = 0
+    mean_tree_depth: float | None = 0.0
+    step_size: float | None = 0.0
+    tree_size: int | None = 0  # grad evals (leapfrog steps)
 
 
 @dataclass
 class SamplingProgress:
     chains: dict[int, ChainProgress]
-    total_divergences: int = 0
+    total_divergences: int | None = 0
     elapsed: float = 0.0
     total_draws: int = 0
     warnings: list[str] = field(default_factory=list)
@@ -177,16 +177,26 @@ def decode_progress_event(data: dict) -> ProgressEvent | None:
                 draw=_as_int(cdata.get("draw")),
                 total=_as_int(cdata.get("total")),
                 phase=cdata.get("phase", "sampling"),
-                draws_per_sec=_as_float(cdata.get("draws_per_sec")),
-                eta_seconds=_as_float(cdata.get("eta_seconds")),
-                divergences=_as_int(cdata.get("divergences")),
-                mean_tree_depth=_as_float(cdata.get("mean_tree_depth")),
-                step_size=_as_float(cdata.get("step_size")),
-                tree_size=_as_int(cdata.get("tree_size")),
+                draws_per_sec=(_optional_float(cdata["draws_per_sec"])
+                               if "draws_per_sec" in cdata else 0.0),
+                eta_seconds=(_optional_float(cdata["eta_seconds"])
+                             if "eta_seconds" in cdata else 0.0),
+                divergences=(_as_int(cdata["divergences"])
+                             if cdata.get("divergences") is not None else
+                             None if "divergences" in cdata else 0),
+                mean_tree_depth=(_optional_float(cdata["mean_tree_depth"])
+                                 if "mean_tree_depth" in cdata else 0.0),
+                step_size=(_optional_float(cdata["step_size"])
+                           if "step_size" in cdata else 0.0),
+                tree_size=(_as_int(cdata["tree_size"])
+                           if cdata.get("tree_size") is not None else
+                           None if "tree_size" in cdata else 0),
             )
         return SamplingProgress(
             chains=chains,
-            total_divergences=_as_int(data.get("total_divergences")),
+            total_divergences=(_as_int(data["total_divergences"])
+                               if data.get("total_divergences") is not None else
+                               None if "total_divergences" in data else 0),
             elapsed=_as_float(data.get("elapsed")),
             total_draws=_as_int(data.get("total_draws")),
             warnings=data.get("warnings") if isinstance(data.get("warnings"), list) else [],
@@ -358,9 +368,10 @@ class ProgressAggregator:
     def _snapshot(self) -> SamplingProgress | None:
         if not self._chains:
             return None
-        total_div = sum(c.divergences for c in self._chains.values())
+        total_div = (sum(c.divergences for c in self._chains.values())
+                     if all(c.divergences is not None for c in self._chains.values()) else None)
         warnings = []
-        if total_div > 0:
+        if total_div is not None and total_div > 0:
             warnings.append(f"{total_div} divergence(s) so far")
         return SamplingProgress(
             chains=dict(self._chains),

@@ -1,6 +1,7 @@
 """Sampler-independent local event stream and lifecycle control."""
 from __future__ import annotations
 
+import inspect
 import queue
 import threading
 import time
@@ -37,6 +38,84 @@ def _convergence(a, d, final=False):
             "met", "decision", "consecutive", "projected_draws", "cause", "hint", "next_check", "checks"
         )}, final=final,
     )
+
+
+def _nutpie_callback_supported(sample):
+    """A catch-all **kwargs does not mean nutpie accepts this sampler setting."""
+    try:
+        param = inspect.signature(sample).parameters.get("progress_callback")
+    except (TypeError, ValueError):
+        return False
+    return param is not None and param.kind in (
+        inspect.Parameter.KEYWORD_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+
+
+def _valid_prefix(group, chain):
+    """Count real, finite draws for one chain, excluding a NaN-padded tail."""
+    if group is None or "chain" not in group.sizes or "draw" not in group.sizes:
+        return 0
+    if chain >= group.sizes["chain"]:
+        return 0
+    n = int(group.sizes["draw"])
+    if not n:
+        return 0
+    for name in group.data_vars:
+        da = group[name]
+        if "chain" not in da.dims or "draw" not in da.dims:
+            continue
+        vals = np.asarray(da.isel(chain=chain).transpose("draw", ...).values)
+        if not np.issubdtype(vals.dtype, np.number):
+            continue
+        finite = np.isfinite(vals.reshape(vals.shape[0], -1)).all(axis=1)
+        if not finite.all():
+            n = min(n, int(np.argmax(~finite)))
+    return n
+
+
+def _nutpie_snapshot_progress(parts, jobs, chains, draws, tune, save_warmup, started):
+    """Compute per-chain post-warmup counts from untrimmed snapshots."""
+    progress = {}
+    for part, (_, count, _, offset) in zip(parts, jobs):
+        posterior = get_group(part, "posterior")
+        warmup = get_group(part, "warmup_posterior") if save_warmup else None
+        sample_stats = get_group(part, "sample_stats")
+        for local in range(count):
+            n = min(draws, _valid_prefix(posterior, local))
+            w = min(tune, _valid_prefix(warmup, local)) if warmup is not None else 0
+            if not n and warmup is not None and w < tune:
+                phase, current, total = "tuning", w, tune
+            elif n or (warmup is not None and w >= tune):
+                phase, current, total = "sampling", n, draws
+            else:
+                phase, current, total = "indeterminate", 0, draws
+            divergent = sample_stats.data_vars.get("diverging") if sample_stats is not None else None
+            n_stats = min(n, _valid_prefix(sample_stats, local))
+            num_div = (int(np.count_nonzero(divergent.isel(chain=local, draw=slice(0, n)).values))
+                       if divergent is not None and n_stats >= n else None)
+            depth = sample_stats.data_vars.get("depth") if sample_stats is not None else None
+            step = sample_stats.data_vars.get("step_size") if sample_stats is not None else None
+            steps = sample_stats.data_vars.get("n_steps") if sample_stats is not None else None
+            mean_depth = (float(np.mean(depth.isel(chain=local, draw=slice(max(0, n - 100), n)).values))
+                          if depth is not None and n_stats >= n and n else None)
+            step_size = (float(step.isel(chain=local, draw=n - 1).values)
+                         if step is not None and n_stats >= n and n else None)
+            tree_size = (int(steps.isel(chain=local, draw=n - 1).values)
+                         if steps is not None and n_stats >= n and n else None)
+            elapsed = time.monotonic() - started
+            speed = current / elapsed if current and elapsed > 0 else None
+            eta = max(0, total - current) / speed if speed else None
+            progress[offset + local] = ChainProgress(current, total, phase,
+                draws_per_sec=speed, eta_seconds=eta, divergences=num_div,
+                mean_tree_depth=mean_depth, step_size=step_size, tree_size=tree_size)
+    # Missing jobs/chains are zero, not the padded draw dimension of a started chain.
+    for i in range(chains):
+        progress.setdefault(i, ChainProgress(0, draws, "indeterminate",
+            draws_per_sec=None, eta_seconds=None, divergences=None,
+            mean_tree_depth=None, step_size=None, tree_size=None))
+    divs = [p.divergences for p in progress.values()]
+    return SamplingProgress(progress, sum(divs) if all(d is not None for d in divs) else None,
+                            time.monotonic() - started,
+                            sum(p.draw for p in progress.values() if p.phase == "sampling"))
 
 
 def _live_converter(model, names):
@@ -284,6 +363,9 @@ def _once(model, sampler, settings, chains, names, ids, init, control, sample_fn
                              chains // len(set(ids)), seeds[k + len(set(ids))], k * (chains // len(set(ids)))))
         else:
             jobs = [(compiled, chains, seed, 0)]
+        callback_supported = _nutpie_callback_supported(nutpie.sample)
+        if not callback_supported:
+            yield _phase("in_progress", "nutpie progress via inspect() polling (no callback API)")
         handles = []
         parts = None
         post = {}
@@ -301,46 +383,76 @@ def _once(model, sampler, settings, chains, names, ids, init, control, sample_fn
             return on_progress
         try:
             for compiled_part, n, part_seed, offset in jobs:
-                handles.append(nutpie.sample(compiled_part, draws=draws, tune=tune, chains=n,
-                    seed=part_seed, blocking=False, progress_bar=False,
-                    progress_callback=make_cb(offset), **forwarded))
+                call = dict(draws=draws, tune=tune, chains=n, seed=part_seed,
+                            blocking=False, progress_bar=False, **forwarded)
+                if callback_supported:
+                    call["progress_callback"] = make_cb(offset)
+                handles.append(nutpie.sample(compiled_part, **call))
             failures = 0
+            last_inspect = [-float("inf")] * len(handles)
+            snapshots = [None] * len(handles)
+            completed_parts = [None] * len(handles)
+            progress = None
             while parts is None:
                 try:
-                    finished = all(h.is_finished for h in handles)
+                    finished_handles = [h.is_finished for h in handles]
                     failures = 0
                 except Exception as exc:
                     failures += 1
                     if failures > 10:
                         raise RuntimeError("nutpie polling failed repeatedly") from exc
-                    finished = False
+                    finished_handles = [False] * len(handles)
                 control.poll()
-                if finished:
-                    parts = [to_inference_data(h.wait()) for h in handles]
+                if control.stopped:
+                    parts = [trim_incomplete_draws(to_inference_data(h.abort())) for h in handles]
+                    break
+                if all(finished_handles):
+                    parts = [completed_parts[i] if completed_parts[i] is not None else
+                             to_inference_data(h.wait()) for i, h in enumerate(handles)]
                     break
                 while not events.empty():
                     yield events.get_nowait()
-                n = min(post.values()) if len(post) == chains else 0
-                if controller.due(n) and not control.stopped:
-                    partial = [trim_incomplete_draws(to_inference_data(h.inspect())) for h in handles]
+                now = time.monotonic()
+                refreshed = False
+                due = controller.due(min(post.values()) if len(post) == chains else 0)
+                for i, h in enumerate(handles):
+                    if finished_handles[i]:
+                        if completed_parts[i] is None:
+                            completed_parts[i] = to_inference_data(h.wait())
+                            refreshed = True
+                        snapshots[i] = completed_parts[i]
+                    elif (not callback_supported or due) and now - last_inspect[i] >= 0.5:
+                        last_inspect[i] = now
+                        snapshots[i] = to_inference_data(h.inspect())
+                        refreshed = True
+                if not callback_supported and refreshed and all(part is not None for part in snapshots):
+                    progress = _nutpie_snapshot_progress(snapshots, jobs, chains, draws, tune,
+                                                         forwarded["save_warmup"], started)
+                    yield progress
+                if not callback_supported:
+                    n = (min(p.draw if p.phase == "sampling" else 0
+                             for p in progress.chains.values()) if progress is not None else 0)
+                    due = controller.due(n)
+                if due and refreshed and not control.stopped and all(part is not None for part in snapshots):
+                    partial = [trim_incomplete_draws(part) for part in snapshots]
                     d = cv.draws_from_idata(partial[0] if len(partial) == 1 else concat_chains(partial),
                                             var_names=names, superchain_ids=ids)
-                    if not controller.due(d.n_draws):
-                        time.sleep(0.05)
-                        continue
-                    a = controller.step(d)
-                    if a["decision"] in ("met", "futile"):
-                        state["decision"] = a["decision"]
-                        parts = [trim_incomplete_draws(to_inference_data(h.abort())) for h in handles]
-                    yield _convergence(a, d)
-                    if parts is not None:
-                        break
+                    if controller.due(d.n_draws):
+                        a = controller.step(d)
+                        if a["decision"] in ("met", "futile"):
+                            state["decision"] = a["decision"]
+                            parts = [trim_incomplete_draws(to_inference_data(h.abort())) for h in handles]
+                        yield _convergence(a, d)
+                        if parts is not None:
+                            break
                 if control.stopped or state["decision"]:
                     parts = [trim_incomplete_draws(to_inference_data(h.abort())) for h in handles]
                     break
                 time.sleep(0.1)
             while not events.empty():
                 yield events.get_nowait()
+            yield _nutpie_snapshot_progress(parts, jobs, chains, draws, tune,
+                                            forwarded["save_warmup"], started)
             idata = parts[0] if len(parts) == 1 else concat_chains(parts)
             return idata, state["decision"]
         finally:

@@ -31,6 +31,23 @@ def test_versioned_roundtrip_and_nonfinite():
     assert event_from_dict(event_to_dict(events[2])).final
 
 
+def test_unavailable_legacy_display_stats_roundtrip():
+    progress = SamplingProgress({0: ChainProgress(4, 20, "sampling",
+        draws_per_sec=None, eta_seconds=None, divergences=None,
+        mean_tree_depth=None, step_size=None, tree_size=None)}, total_divergences=None)
+    encoded = event_to_dict(progress)
+    assert encoded["chains"]["0"]["step_size"] is None
+    assert encoded["chains"]["0"]["divergences"] is None
+    decoded = event_from_dict(encoded)
+    assert decoded.chains[0].mean_tree_depth is None
+    assert decoded.chains[0].step_size is None
+    assert decoded.chains[0].tree_size is None
+    assert decoded.chains[0].draws_per_sec is None
+    assert decoded.chains[0].eta_seconds is None
+    assert decoded.chains[0].divergences is None
+    assert decoded.total_divergences is None
+
+
 def test_unknown_versions_and_malformed_entries_are_skipped():
     assert event_from_dict({"schema_version": 2, "type": "sampling"}) is None
     assert event_from_dict({"type": "future"}) is None

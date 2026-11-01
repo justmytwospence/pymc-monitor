@@ -272,10 +272,11 @@ def test_nutpie_real_adaptive_stream():
     pytest.importorskip("nutpie")
     with pm.Model() as model:
         pm.Normal("x")
-    events, result = drain(engine.iter_sample(model, {"draws": 100000, "tune": 100,
+    # A tiny model can finish 100k draws before the legacy 0.5s inspect interval.
+    events, result = drain(engine.iter_sample(model, {"draws": 1_000_000, "tune": 100,
         "chains": 2, "random_seed": 4, "target_accept": .9}, nuts_sampler="nutpie",
         until={"preset": "draft", "ess": 10, "r_hat": 1.5, "patience": 1, "futility": False}))
-    assert 4 <= result.report["draws"] < 100000
+    assert 4 <= result.report["draws"] < 1_000_000
     assert result.report["status"] == "met"
     assert any(isinstance(e, ConvergenceUpdate) and not e.final for e in events)
 
@@ -368,6 +369,209 @@ def test_nutpie_stop_is_latched_before_yield(model, idata, monkeypatch):
                 break
     finally:
         stream.close()
+
+
+def test_nutpie_callback_capability():
+    def legacy(*, other=None, **kwargs):
+        pass
+    def supported(*, progress_callback=None, **kwargs):
+        pass
+    assert not engine._nutpie_callback_supported(legacy)
+    assert engine._nutpie_callback_supported(supported)
+    assert not engine._nutpie_callback_supported(lambda *args, **kwargs: None)
+    class NoSignature:
+        @property
+        def __signature__(self):
+            raise ValueError("cannot inspect")
+    assert not engine._nutpie_callback_supported(NoSignature())
+
+
+def test_nutpie_snapshot_counts_padding_warmup_and_offsets(idata):
+    import arviz as az
+
+    rng = np.random.default_rng(13)
+    def from_dict(**groups):
+        try:
+            return az.from_dict(**groups)
+        except TypeError:
+            import xarray as xr
+
+            data = az.from_dict({"posterior": groups["posterior"]})
+            warmup = groups["warmup_posterior"]["x"]
+            data["warmup_posterior"] = xr.Dataset(
+                {"x": (("chain", "draw"), warmup)})
+            return data
+    first = from_dict(posterior={"x": np.array([[1., 2., np.nan, np.nan],
+                                                     [3., 4., 5., np.nan]])},
+                         warmup_posterior={"x": rng.normal(size=(2, 3))},
+                         save_warmup=True)
+    second = from_dict(posterior={"x": np.array([[np.nan] * 4, [1., np.nan, np.nan, np.nan]])},
+                          warmup_posterior={"x": rng.normal(size=(2, 2))},
+                          save_warmup=True)
+    jobs = [(None, 2, 1, 0), (None, 2, 2, 2)]
+    progress = engine._nutpie_snapshot_progress([first, second], jobs, 4, 50, 5, True, 0)
+    assert [progress.chains[i].draw for i in range(4)] == [2, 3, 2, 1]
+    assert [progress.chains[i].phase for i in range(4)] == ["sampling", "sampling", "tuning", "sampling"]
+    assert progress.total_draws == 6
+    assert progress.chains[0].step_size is None
+    assert progress.chains[0].divergences is None and progress.total_divergences is None
+    empty = object()
+    no_warmup = engine._nutpie_snapshot_progress([empty], [(None, 2, 1, 0)], 2,
+                                                  50, 5, False, 0)
+    assert no_warmup.total_draws == 0 and no_warmup.total_divergences is None
+    assert all(p.phase == "indeterminate" and p.draw == 0 and p.draws_per_sec is None
+               for p in no_warmup.chains.values())
+    missing = engine._nutpie_snapshot_progress([idata], [(None, 2, 1, 2)], 4,
+                                                100, 5, False, 0)
+    assert missing.chains[0].draw == missing.chains[1].draw == 0
+    # A snapshot may contain fewer chains than the handle requested.
+    try:
+        one_chain = az.from_dict(posterior={"x": np.ones((1, 3))})
+    except TypeError:
+        one_chain = az.from_dict({"posterior": {"x": np.ones((1, 3))}})
+    unstarted = engine._nutpie_snapshot_progress([one_chain], [(None, 2, 1, 0)],
+                                                  2, 50, 5, False, 0)
+    assert unstarted.chains[0].draw == 3 and unstarted.chains[1].draw == 0
+
+
+def test_nutpie_legacy_fast_completion_and_stop(model, idata, monkeypatch):
+    import nutpie
+
+    calls, aborted = [], []
+    class Handle:
+        def __init__(self):
+            self.polls = 0
+        @property
+        def is_finished(self):
+            self.polls += 1
+            return self.polls >= 2 and not stopping
+        def inspect(self):
+            return idata
+        def wait(self):
+            return idata
+        def abort(self):
+            aborted.append(True)
+            return idata
+    def sample(compiled, *, save_warmup=False, **kwargs):
+        assert "progress_callback" not in kwargs
+        calls.append(kwargs)
+        return Handle()
+    monkeypatch.setattr(nutpie, "sample", sample)
+    monkeypatch.setattr(nutpie, "compile_pymc_model", lambda *a, **kw: object())
+    stopping = False
+    events, result = drain(engine.iter_sample(model, {"chains": 2, "draws": 200},
+                                               nuts_sampler="nutpie"))
+    assert result.effective_sampler == "nutpie"
+    assert any("inspect() polling" in e.message for e in events if isinstance(e, PhaseUpdate))
+    assert [p.total_draws for p in events if isinstance(p, SamplingProgress)][-1] == 200
+    assert len(calls) == 1 and not aborted
+    stopping = True
+    control = RunControl(poll=lambda: len(calls) > 1)
+    events, result = drain(engine.iter_sample(model, {"chains": 2, "draws": 200},
+                                               nuts_sampler="nutpie", control=control))
+    assert result.report["status"] == "stopped" and aborted
+    assert any(isinstance(e, SamplingProgress) for e in events)
+
+
+def test_nutpie_legacy_launch_failure_is_not_retried(model, monkeypatch):
+    import nutpie
+
+    calls = []
+    def sample(compiled, *, save_warmup=False, **kwargs):
+        calls.append(kwargs)
+        raise RuntimeError("launch failed")
+    monkeypatch.setattr(nutpie, "sample", sample)
+    monkeypatch.setattr(nutpie, "compile_pymc_model", lambda *a, **kw: object())
+    control = RunControl()
+    with pytest.raises(RuntimeError, match="launch failed"):
+        drain(engine.iter_sample(model, {"chains": 2}, nuts_sampler="nutpie", control=control))
+    assert len(calls) == 1 and "progress_callback" not in calls[0]
+    assert control.stopped
+
+
+def test_nutpie_legacy_throttle_checkpoint_and_inspect_error(model, idata, monkeypatch):
+    import arviz as az
+    import nutpie
+
+    sparse_groups = {"posterior": {"x": np.array([[1.] * 49 + [np.nan] * 51,
+                                                     [2.] * 50 + [np.nan] * 50]),
+                                           "scale": np.array([[1.] * 49 + [np.nan] * 51,
+                                                              [2.] * 50 + [np.nan] * 50])}}
+    try:
+        sparse = az.from_dict(**sparse_groups)
+    except TypeError:
+        sparse = az.from_dict(sparse_groups)
+    clock = [0.0]
+    inspections = []
+    class Handle:
+        is_finished = False
+        def inspect(self):
+            inspections.append(clock[0])
+            if error:
+                raise RuntimeError("snapshot failed")
+            return sparse
+        def abort(self):
+            return idata
+    def sample(compiled, *, save_warmup=False, **kwargs):
+        assert "progress_callback" not in kwargs
+        return Handle()
+    monkeypatch.setattr(nutpie, "sample", sample)
+    monkeypatch.setattr(nutpie, "compile_pymc_model", lambda *a, **kw: object())
+    monkeypatch.setattr(engine.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(engine.time, "sleep", lambda seconds: clock.__setitem__(0, clock[0] + seconds))
+    error = False
+    control = RunControl(poll=lambda: clock[0] >= 1.2)
+    events, result = drain(engine.iter_sample(model, {"chains": 2, "draws": 200},
+        nuts_sampler="nutpie", until={"preset": "draft", "ess": 10000, "futility": False},
+        control=control))
+    assert inspections == pytest.approx([0, .5, 1.1])
+    assert result.report["status"] == "stopped"
+    assert max(e.total_draws for e in events if isinstance(e, SamplingProgress)) == 200
+    assert not any(isinstance(e, ConvergenceUpdate) and not e.final for e in events)
+    clock[0] = 0
+    error = True
+    control = RunControl()
+    with pytest.raises(RuntimeError, match="snapshot failed"):
+        drain(engine.iter_sample(model, {"chains": 2, "draws": 200},
+             nuts_sampler="nutpie", control=control))
+    assert control.stopped
+
+
+def test_nutpie_legacy_checkpoint_uses_balanced_prefix(model, idata, monkeypatch):
+    from copy import deepcopy
+
+    import nutpie
+
+    partial = deepcopy(idata)
+    for name in partial.posterior.data_vars:
+        partial.posterior[name].values[:, 50:] = np.nan
+    checked = []
+    class Handle:
+        is_finished = False
+        def inspect(self):
+            return partial
+        def abort(self):
+            return idata
+    def sample(compiled, *, save_warmup=False, **kwargs):
+        assert "progress_callback" not in kwargs
+        return Handle()
+    def step(self, draws):
+        checked.append(draws.n_draws)
+        self.next_at = 201
+        return {"decision": "continue", "met": False}
+    monkeypatch.setattr(nutpie, "sample", sample)
+    monkeypatch.setattr(nutpie, "compile_pymc_model", lambda *a, **kw: object())
+    monkeypatch.setattr(engine.cv.Controller, "step", step)
+    clock = [0.0]
+    monkeypatch.setattr(engine.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(engine.time, "sleep", lambda seconds: clock.__setitem__(0, clock[0] + seconds))
+    control = RunControl(poll=lambda: clock[0] >= .7)
+    events, result = drain(engine.iter_sample(model, {"chains": 2, "draws": 200},
+        nuts_sampler="nutpie", until={"preset": "draft", "ess": 1, "futility": False},
+        control=control))
+    assert checked == [50]
+    assert [e.draws for e in events if isinstance(e, ConvergenceUpdate) and not e.final] == [50]
+    assert result.report["status"] == "stopped"
 
 
 def test_escalation_attempt_history(model, idata, monkeypatch):

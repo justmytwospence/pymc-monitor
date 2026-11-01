@@ -48,6 +48,17 @@ def test_sampling_table_html_renders_rows():
     assert "<table" in html and "Chain 0" in html and "50/100" in html
 
 
+def test_sampling_table_html_unavailable_stats():
+    progress = SamplingProgress({0: ChainProgress(0, 20, "indeterminate",
+        draws_per_sec=None, eta_seconds=None, divergences=None,
+        mean_tree_depth=None, step_size=None, tree_size=None)}, total_divergences=None)
+    html = display._sampling_table_html(progress)
+    assert "indeterminate" in html and ">--</td>" in html
+    terminal = display.TerminalDisplay("test")
+    terminal.show_sampling(progress)
+    assert terminal._sampling is progress
+
+
 def test_sampling_table_html_colors_divergences_red():
     assert "#d9534f" in display._sampling_table_html(_sampling(divergences=3))
 

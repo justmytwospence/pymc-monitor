@@ -10,18 +10,21 @@ jobs:
           - python: '3.11'
             pymc: '5.28.*'
             arviz: '0.*'
+            nutpie: 'nutpie==0.16.8'
           - python: '3.12'
             pymc: '5.28.*'
             arviz: '0.*'
+            nutpie: 'nutpie==0.16.11'
           - python: '3.13'
             pymc: '6.*'
             arviz: '1.*'
+            nutpie: 'nutpie==0.16.11'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
       - run: uv python install ${{ matrix.python }}
       - run: uv sync --no-config --locked --group dev --group docs --extra dashboard --python ${{ matrix.python }}
-      - run: uv pip install --python .venv/bin/python 'pymc==${{ matrix.pymc }}' 'arviz==${{ matrix.arviz }}' 'numpy<2.5'
+      - run: uv pip install --python .venv/bin/python 'pymc==${{ matrix.pymc }}' 'arviz==${{ matrix.arviz }}' 'numpy<2.5' '${{ matrix.nutpie }}'
       - run: uv run --no-sync ruff check src tests scripts
       - run: uv run --no-sync pytest -q --cov=pymc_monitor --cov-fail-under=85
       - run: uv run --no-sync python scripts/check_version.py
