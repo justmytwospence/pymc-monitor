@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import math
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from enum import Enum
 from queue import Empty, Queue
 from typing import Iterator
+
+from .convergence import _jsonable
 
 
 class JobPhase(str, Enum):
@@ -78,22 +81,54 @@ class SamplingResult:
 
     idata: object
     report: dict
+    effective_sampler: str | None = None
 
 
-ProgressEvent = PhaseUpdate | SamplingProgress | ConvergenceUpdate
+@dataclass
+class RunFinished:
+    status: str
+    report: dict | None = None
+    message: str = ""
+
+
+ProgressEvent = PhaseUpdate | SamplingProgress | ConvergenceUpdate | RunFinished
+
+
+def event_to_dict(event: ProgressEvent) -> dict:
+    """Encode a progress event for JSON/msgpack cloud transports (wire version 1)."""
+    kinds = {PhaseUpdate: "phase", SamplingProgress: "sampling",
+             ConvergenceUpdate: "convergence", RunFinished: "run_finished"}
+    kind = kinds.get(type(event))
+    if kind is None:
+        raise TypeError(f"unsupported event: {type(event).__name__}")
+    data = asdict(event)
+    if isinstance(event, PhaseUpdate):
+        data["phase"] = event.phase.value
+    return {"schema_version": 1, "type": kind, **_jsonable(data)}
+
+
+def event_from_dict(data: dict) -> ProgressEvent | None:
+    """Decode both version-1 and legacy cloud messages; skip unknown types."""
+    return decode_progress_event(data)
 
 
 def _as_float(value, default: float = 0.0) -> float:
     try:
-        return float(value)
-    except (TypeError, ValueError):
+        result = float(value)
+        return result if math.isfinite(result) else default
+    except (TypeError, ValueError, OverflowError):
         return default
+
+
+def _optional_float(value) -> float | None:
+    result = _as_float(value, float("nan"))
+    return result if math.isfinite(result) else None
 
 
 def _as_int(value, default: int = 0) -> int:
     try:
         return int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return default
 
 
@@ -108,6 +143,8 @@ def decode_progress_event(data: dict) -> ProgressEvent | None:
     mid-decode, and a null slipping through reached the dashboard where
     ``.toFixed`` on it read as the run having gone offline.
     """
+    if not isinstance(data, dict) or data.get("schema_version", 1) != 1:
+        return None
     msg_type = data.get("type")
 
     if msg_type == "phase":
@@ -123,13 +160,17 @@ def decode_progress_event(data: dict) -> ProgressEvent | None:
             status=data.get("status", "in_progress"),
             message=data.get("message", ""),
             elapsed=_as_float(data.get("elapsed")),
+            progress=_optional_float(data.get("progress")),
         )
 
     if msg_type == "sampling":
         chains = {}
-        for chain_id_str, cdata in data.get("chains", {}).items():
+        raw_chains = data.get("chains")
+        for chain_id_str, cdata in (raw_chains if isinstance(raw_chains, dict) else {}).items():
             try:
                 chain_id = int(chain_id_str)
+                if not isinstance(cdata, dict):
+                    continue
             except (TypeError, ValueError):
                 continue
             chains[chain_id] = ChainProgress(
@@ -148,23 +189,34 @@ def decode_progress_event(data: dict) -> ProgressEvent | None:
             total_divergences=_as_int(data.get("total_divergences")),
             elapsed=_as_float(data.get("elapsed")),
             total_draws=_as_int(data.get("total_draws")),
+            warnings=data.get("warnings") if isinstance(data.get("warnings"), list) else [],
         )
 
     if msg_type == "convergence":
         params = {}
-        for name, pdata in data.get("params", {}).items():
-            params[name] = ParamConvergence(
-                rhat=None if pdata.get("rhat") is None else _as_float(pdata["rhat"]),
+        raw_params = data.get("params")
+        for name, pdata in (raw_params if isinstance(raw_params, dict) else {}).items():
+            if not isinstance(pdata, dict):
+                continue
+            params[str(name)] = ParamConvergence(
+                rhat=_optional_float(pdata.get("rhat")),
                 ess_bulk=_as_float(pdata.get("ess_bulk")),
                 ess_tail=_as_float(pdata.get("ess_tail")),
             )
-        traces = data.get("traces", {})
+        traces = data.get("traces")
+        traces = _jsonable(traces) if isinstance(traces, dict) else {}
         verdict = data.get("verdict")
         return ConvergenceUpdate(
             params=params, draws=_as_int(data.get("draws")), traces=traces,
             verdict=verdict if isinstance(verdict, dict) else None,
-            final=data.get("partial") is False,
+            final=bool(data.get("final", data.get("partial") is False)),
         )
+
+    if msg_type == "run_finished":
+        report = data.get("report")
+        return RunFinished(str(data.get("status", "complete")),
+                           report if isinstance(report, dict) else None,
+                           str(data.get("message", "")))
 
     return None
 
@@ -184,6 +236,8 @@ def dispatch_event(event: ProgressEvent | None, sinks) -> None:
             sink.show_sampling(event)
         elif isinstance(event, ConvergenceUpdate) and hasattr(sink, "show_convergence"):
             sink.show_convergence(event)
+        elif isinstance(event, RunFinished) and hasattr(sink, "finish"):
+            sink.finish(event.status)
 
 
 def make_sampling_callback(queue: Queue, tune: int, draws: int):

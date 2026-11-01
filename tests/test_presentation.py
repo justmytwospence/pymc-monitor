@@ -7,7 +7,12 @@ from urllib.parse import urlsplit
 import pytest
 
 from pymc_monitor import RunControl, display
-from pymc_monitor.dashboard import DashboardService, DashboardState, dashboard_assets
+from pymc_monitor.dashboard import (
+    Dashboard,
+    DashboardState,
+    dashboard_assets,
+    render_dashboard_html,
+)
 from pymc_monitor.events import ConvergenceUpdate, JobPhase, ParamConvergence, PhaseUpdate
 from pymc_monitor.rendering import convergence_html, number
 
@@ -75,39 +80,55 @@ def test_reducer_copies_and_sanitizes(convergence):
 
 
 def test_http_assets_auth_origin_and_close():
-    service = DashboardService(RunControl())
-    service.start()
-    url = urlsplit(service.url)
+    state, control = DashboardState(), RunControl()
+    service = Dashboard()
+    run_id = service.add_run(state, control)
+    url = urlsplit(service.url(run_id))
     base = f"http://{url.netloc}"
-    headers = {"Authorization": f"Bearer {url.fragment}"}
+    token = url.path.split("/")[2]
+    headers = {"Authorization": f"Bearer {token}"}
     try:
-        with pytest.raises(RuntimeError, match="already"):
-            service.start()
-        for path in ["/", "/dashboard.js", "/dashboard.css", "/renderer.js"]:
-            with urllib.request.urlopen(base + path) as response:
-                assert response.status == 200
-                assert "frame-ancestors 'none'" in response.headers["Content-Security-Policy"]
-                assert response.read()
+        assert service.start() is service
+        with urllib.request.urlopen(service.url(run_id)) as response:
+            assert response.status == 200
+            assert "HttpOnly" in response.headers["Set-Cookie"]
+            assert "frame-ancestors 'none'" in response.headers["Content-Security-Policy"]
+            assert b"dashboard-config" in response.read()
+        for path in ["/assets/dashboard.js", "/assets/dashboard.css", "/assets/renderer.js"]:
+            with urllib.request.urlopen(urllib.request.Request(base + path, headers=headers)) as response:
+                assert response.status == 200 and response.read()
         for method, path, extra, status in [
             ("GET", "/unknown", {}, 404), ("POST", "/unknown", {}, 404),
-            ("GET", "/stop", {}, 404),
-            ("GET", "/state", {"Host": "evil.test"}, 403),
-            ("GET", "/state", {"Origin": "http://evil.test"}, 403),
-            ("POST", "/stop", {"Authorization": "Bearer wrong"}, 403),
+            ("GET", f"/runs/{run_id}/stop", {}, 405),
+            ("GET", f"/runs/{run_id}/state", {"Host": "evil.test"}, 403),
+            ("GET", f"/runs/{run_id}/state", {"Origin": "http://evil.test"}, 403),
+            ("POST", f"/runs/{run_id}/stop", {"Authorization": "Bearer wrong"}, 403),
+            ("GET", "/assets/dashboard.js", {"Authorization": "Bearer wrong"}, 403),
         ]:
             req = urllib.request.Request(base + path, method=method, headers={**headers, **extra})
             with pytest.raises(urllib.error.HTTPError) as exc:
                 urllib.request.urlopen(req)
             assert exc.value.code == status
-        req = urllib.request.Request(base + "/stop", method="POST",
-                                      headers={**headers, "Origin": base})
+        req = urllib.request.Request(base + f"/runs/{run_id}/stop", method="POST",
+                                     headers={**headers, "Origin": base})
         assert urllib.request.urlopen(req).status == 204
-        assert service.snapshot()["stop_requested"]
+        assert state.snapshot()["stop_requested"]
+        with pytest.raises(urllib.error.HTTPError) as exc:
+            urllib.request.urlopen(req)
+        assert exc.value.code == 409
         assert "renderer.js" in dashboard_assets()
     finally:
         service.close()
     service.close()
-    assert service.url is None
+    assert service.url(run_id) is None
+
+
+def test_shared_html_escapes_config_and_title():
+    html = render_dashboard_html(progress_url='</script><img src=x>', stop_url='/stop',
+                                 token='"</script>', title='<script>bad</script>')
+    assert '<img src=x>' not in html and '<script>bad</script>' not in html
+    assert '\\u003c/script>' in html
+    assert '&lt;script&gt;bad&lt;/script&gt;' in html
 
 
 def test_oneshot_terminal_fallback(monkeypatch):

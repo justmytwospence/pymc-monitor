@@ -15,6 +15,7 @@ from .events import (
     JobPhase,
     ParamConvergence,
     PhaseUpdate,
+    RunFinished,
     SamplingProgress,
     SamplingResult,
 )
@@ -139,9 +140,11 @@ def iter_sample(model, sample_kwargs, *, nuts_sampler=None, until=None, initial_
                 cv.attach_report(idata, report)
             yield _phase("done", cv.verdict_message(report), time.monotonic() - started)
             completed = True
-            return SamplingResult(idata, report)
+            yield RunFinished(status, report)
+            return SamplingResult(idata, report, sampler)
     except Exception as exc:
         yield _phase("error", str(exc), time.monotonic() - started)
+        yield RunFinished("error", message=str(exc))
         raise
     finally:
         if not completed:

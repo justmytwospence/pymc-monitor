@@ -1,13 +1,13 @@
 import { render } from "./renderer.js";
-const token = location.hash.slice(1);
-// Remove the bearer token from browser history before rendering any data.
-history.replaceState(null, "", location.pathname);
-const headers = {Authorization: `Bearer ${token}`};
+const config = JSON.parse(document.getElementById("dashboard-config").textContent);
+const token = config.token || location.hash.slice(1);
+if (location.hash) history.replaceState(null, "", location.pathname);
+const headers = token ? {Authorization: `Bearer ${token}`} : {};
 const $ = id => document.getElementById(id);
 let stopRequested = false;
 async function poll() {
   try {
-    const response = await fetch("/state", {headers, cache: "no-store"});
+    const response = await fetch(config.progress_url, {headers, cache: "no-store"});
     if (!response.ok) throw Error(`HTTP ${response.status}`);
     const state = await response.json();
     render({...state, stop_requested: state.stop_requested || stopRequested});
@@ -17,7 +17,8 @@ async function poll() {
 $("stop").addEventListener("click", async () => {
   $("stop").disabled = true;
   try {
-    const response = await fetch("/stop", {method: "POST", headers});
+    const response = await fetch(config.stop_url, {method: "POST", headers});
+    if (response.status === 409) { $("status").textContent = "Run already finished or stopping"; return; }
     if (!response.ok) throw Error(`HTTP ${response.status}`);
     stopRequested = true;
     $("status").textContent = "Stop requested";
@@ -26,4 +27,4 @@ $("stop").addEventListener("click", async () => {
     $("stop").disabled = false;
   }
 });
-if (token) poll(); else $("status").textContent = "Missing dashboard token";
+poll();

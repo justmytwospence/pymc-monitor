@@ -9,7 +9,7 @@ import pytest
 
 import pymc_monitor as monitor
 from pymc_monitor import convergence as cv
-from pymc_monitor.dashboard import DashboardService, DashboardState
+from pymc_monitor.dashboard import Dashboard, DashboardState
 from pymc_monitor.progress import ConvergenceUpdate, JobPhase, PhaseUpdate
 
 
@@ -46,7 +46,9 @@ def test_iter_sample_returns_result(model):
     assert isinstance(result, monitor.SamplingResult)
     assert monitor.read_report(result.idata) == result.report
     assert events[0].phase == JobPhase.SAMPLING
-    assert events[-1].status == "done"
+    assert events[-2].status == "done"
+    assert events[-1].status == result.report["status"]
+    assert result.effective_sampler == "pymc"
 
 
 def test_start_wait_snapshot(model):
@@ -83,40 +85,42 @@ def test_missing_required_hmc_stats_fail_closed():
 
 
 def test_normalizer_protocol_no_cache_dependency(model):
-    norm = monitor.sample.__pymc_cache_normalize__(model=model, draws=10, progress=False,
-                                                     until="draft", nuts_sampler="pymc")
-    assert norm["call_kwargs"]["model"] is model
+    norm = monitor.sample.__pymc_cache_normalize__(model, {"draws": 10, "progress": False,
+                                                        "until": "draft", "nuts_sampler": "pymc"})
+    assert set(norm) == {"call_kwargs", "key_kwargs", "sampler_identity", "versions"}
+    assert "model" not in norm["call_kwargs"]
     assert norm["key_kwargs"]["until"]["ess"] == 100
     assert "progress" not in norm["key_kwargs"]
     assert norm["sampler_identity"] == "pymc"
     assert norm["versions"]["pymc-monitor"] == "0.1.0"
     with pytest.raises(ValueError, match="cacheable"):
-        monitor.sample.__pymc_cache_normalize__(control=monitor.RunControl())
+        monitor.sample.__pymc_cache_normalize__(model, {"control": monitor.RunControl()})
 
 
 def test_dashboard_auth_and_local_stop():
     control = monitor.RunControl()
-    service = DashboardService(control)
-    service.start()
+    state = DashboardState()
+    service = Dashboard()
+    run_id = service.add_run(state, control)
     try:
-        url = service.url
+        url = service.url(run_id)
         assert urlsplit(url).hostname == "127.0.0.1"
-        token = urlsplit(url).fragment
+        token = urlsplit(url).path.split("/")[2]
+        base = f"http://{urlsplit(url).netloc}/runs/{run_id}"
         with pytest.raises(urllib.error.HTTPError) as exc:
-            urllib.request.urlopen(url.split("#")[0] + "state")
+            urllib.request.urlopen(base + "/state")
         assert exc.value.code == 403
-        req = urllib.request.Request(url.split("#")[0] + "state",
-                                     headers={"Authorization": f"Bearer {token}"})
-        assert b'"complete": false' in urllib.request.urlopen(req).read()
-        service.show_phase(PhaseUpdate(JobPhase.SAMPLING, "in_progress", "working", 1))
-        assert service.snapshot()["phases"][0]["detail"] == "working"
-        bad = urllib.request.Request(url.split("#")[0] + "stop", method="POST",
+        req = urllib.request.Request(base + "/state", headers={"Authorization": f"Bearer {token}"})
+        assert b'"complete":false' in urllib.request.urlopen(req).read()
+        state.show_phase(PhaseUpdate(JobPhase.SAMPLING, "in_progress", "working", 1))
+        assert state.snapshot()["phases"][0]["detail"] == "working"
+        bad = urllib.request.Request(base + "/stop", method="POST",
             headers={"Authorization": f"Bearer {token}", "Origin": "https://evil.test"})
         with pytest.raises(urllib.error.HTTPError) as exc:
             urllib.request.urlopen(bad)
         assert exc.value.code == 403
         assert not control.stopped
-        good = urllib.request.Request(url.split("#")[0] + "stop", method="POST",
+        good = urllib.request.Request(base + "/stop", method="POST",
             headers={"Authorization": f"Bearer {token}"})
         assert urllib.request.urlopen(good).status == 204
         assert control.stopped

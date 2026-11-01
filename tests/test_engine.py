@@ -46,19 +46,27 @@ def idata():
         return az.from_dict(groups)
 
 
-def test_control_external_poll_latches_and_propagates():
+def test_control_external_poll_latches_and_warns(monkeypatch):
     calls = []
     control = RunControl(poll=lambda: calls.append(1) or True)
     assert control.poll() and control.stopped
     assert control.poll() and calls == [1]
-    with pytest.raises(TypeError, match="poll"):
-        RunControl(poll=3)
+    with pytest.raises(TypeError, match="stop_requested"):
+        RunControl(stop_requested=3)
+    clock = [0.0]
+    monkeypatch.setattr("pymc_monitor.control.time.monotonic", lambda: clock[0])
+    calls = []
     def fail():
+        calls.append(True)
         raise RuntimeError("lost control channel")
-    control = RunControl(poll=fail)
-    with pytest.raises(RuntimeError, match="lost control"):
-        control.poll()
-    assert control.stopped
+    control = RunControl(stop_requested=fail)
+    with pytest.warns(RuntimeWarning, match="lost control channel"):
+        assert not control.is_stop_requested()
+    assert not control.poll() and len(calls) == 1
+    clock[0] = 0.51
+    assert not control.poll() and len(calls) == 2
+    control.request_stop()
+    assert control.stopped and control.is_stop_requested()
 
 
 def test_defaults_and_native_constraints(model, monkeypatch):
@@ -139,7 +147,7 @@ def test_native_user_callback_and_exact_live_values(model):
         np.testing.assert_allclose(result.idata.posterior.scale.values[chain],
                                    [x for c, x in points if c == chain])
     assert any(isinstance(event, SamplingProgress) for event in events)
-    assert isinstance(events[-2], ConvergenceUpdate) and events[-2].final
+    assert isinstance(events[-3], ConvergenceUpdate) and events[-3].final
 
 
 @pytest.mark.parametrize("sampler", ["numpyro", "blackjax"])
@@ -205,14 +213,15 @@ def test_event_callback_error_stops_run(model, monkeypatch):
 
 def test_cache_normalizes_execution_and_rejects_callback(model):
     normalizer = monitor.sample.__pymc_cache_normalize__
-    one = normalizer(model=model, nuts_sampler="pymc", until=True, cores=1)
-    two = normalizer(model=model, nuts_sampler="pymc", until="final", cores=1,
-                     draws=1000, tune=1000, chains=2, dashboard=True, progress=False)
+    one = normalizer(model, {"nuts_sampler": "pymc", "until": True, "cores": 1})
+    two = normalizer(model, {"nuts_sampler": "pymc", "until": "final", "cores": 1,
+                             "draws": 1000, "tune": 1000, "chains": 2,
+                             "dashboard": True, "progress": False})
     assert set(one) == {"call_kwargs", "key_kwargs", "sampler_identity", "versions"}
     assert one["key_kwargs"] == two["key_kwargs"]
-    assert one["call_kwargs"]["model"] is model
+    assert "model" not in one["call_kwargs"]
     with pytest.raises(ValueError, match="cacheable"):
-        normalizer(model=model, callback=lambda **_: None)
+        normalizer(model, {"callback": lambda **_: None})
 
 
 def test_native_adaptive_balanced_recovery():

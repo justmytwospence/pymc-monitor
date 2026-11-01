@@ -1,6 +1,7 @@
 """Public handle ownership, timeouts, display fallback and observer failures."""
 import threading
 import time
+from urllib.parse import urlsplit
 
 import pymc as pm
 import pytest
@@ -8,6 +9,7 @@ import pytest
 import pymc_monitor as monitor
 from pymc_monitor import api, display
 from pymc_monitor.events import JobPhase, PhaseUpdate, SamplingResult
+from pymc_monitor.server import Dashboard
 
 
 @pytest.fixture
@@ -44,6 +46,25 @@ def test_wait_timeout_stop_dashboard_and_repeated_close(fake_run):
     handle.close()
     handle.close()
     assert handle.dashboard_url is None
+
+
+def test_shared_dashboard_handles_keep_other_run_alive(fake_run):
+    model, release, _, idata = fake_run
+    dashboard = Dashboard(idle_timeout=1)
+    try:
+        first = monitor.start(model=model, progress=False, dashboard=dashboard)
+        second = monitor.start(model=model, progress=False, dashboard=dashboard)
+        assert first.dashboard_url != second.dashboard_url
+        assert urlsplit(first.dashboard_url).port == urlsplit(second.dashboard_url).port
+        first.stop()
+        assert first.wait(5) is idata
+        first.close()
+        assert second.dashboard_url is not None and not second.done
+        release.set()
+        assert second.wait(5) is idata
+        second.close()
+    finally:
+        dashboard.close()
 
 
 @pytest.mark.parametrize("notebook,missing", [(False, False), (True, False), (True, True)])
@@ -104,8 +125,8 @@ def test_normalizer_sampler_versions_and_absent_packages(fake_run, monkeypatch):
             raise api.PackageNotFoundError(package)
         return "test"
     monkeypatch.setattr(api, "version", version)
-    normalized = monitor.sample.__pymc_cache_normalize__(model=model, nuts_sampler="blackjax")
+    normalized = monitor.sample.__pymc_cache_normalize__(model, {"nuts_sampler": "blackjax"})
     assert normalized["versions"]["blackjax"] is None
     assert normalized["versions"]["jax"] == "test"
-    nutpie = monitor.sample.__pymc_cache_normalize__(model=model, nuts_sampler="nutpie")
+    nutpie = monitor.sample.__pymc_cache_normalize__(model, {"nuts_sampler": "nutpie"})
     assert nutpie["versions"]["nutpie"] == "test"

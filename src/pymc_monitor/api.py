@@ -24,6 +24,8 @@ class SamplingHandle:
         self._latest = None
         self._sinks = [self._state]
         self._dashboard = None
+        self._dashboard_run_id = None
+        self._owns_dashboard = False
         if progress:
             from .display import NotebookDisplay, TerminalDisplay, _is_marimo, _is_notebook
             if _is_notebook() or _is_marimo():
@@ -37,10 +39,15 @@ class SamplingHandle:
             if isinstance(sink, TerminalDisplay):
                 sink.start()
         if dashboard:
-            from .dashboard import DashboardService
-            self._dashboard = DashboardService(self._control)
-            self._dashboard.start()
-            self._sinks.append(self._dashboard)
+            from .dashboard import Dashboard
+            if dashboard is True:
+                self._dashboard = Dashboard()
+                self._owns_dashboard = True
+            elif isinstance(dashboard, Dashboard):
+                self._dashboard = dashboard
+            else:
+                raise TypeError("dashboard must be a Dashboard instance or bool")
+            self._dashboard_run_id = self._dashboard.add_run(self._state, self._control)
 
         def run():
             stream = iter_sample(model, kwargs, until=until, initial_strategy=initial_strategy,
@@ -72,9 +79,8 @@ class SamplingHandle:
                     except Exception as exc:
                         if self._error is None:
                             self._error = exc
-                self._state.finish()
-                if self._dashboard:
-                    self._dashboard.finish()
+                self._state.finish("error" if self._error else
+                                   self._result.report.get("status", "complete") if self._result else "error")
                 self._done.set()
 
         self._thread = threading.Thread(target=run, daemon=True, name="pymc-monitor")
@@ -86,14 +92,12 @@ class SamplingHandle:
 
     @property
     def dashboard_url(self):
-        return self._dashboard.url if self._dashboard else None
+        return self._dashboard.url(self._dashboard_run_id) if self._dashboard else None
 
     def stop(self):
         self._control.stop()
         if not self.done:
             self._state.request_stop()
-            if self._dashboard:
-                self._dashboard.request_stop()
 
     def wait(self, timeout=None):
         if threading.current_thread() is self._thread:
@@ -108,14 +112,16 @@ class SamplingHandle:
         return {"done": self.done, "event": self._latest,
                 "report": self._result.report if self._result else None,
                 "state": self._state.snapshot(),
-                "dashboard": self._dashboard.snapshot() if self._dashboard else None}
+                "dashboard": self._state.snapshot() if self._dashboard else None}
 
     def close(self):
         self.stop()
         if threading.current_thread() is not self._thread:
             self._thread.join()
         if self._dashboard:
-            self._dashboard.close()
+            self._dashboard.remove_run(self._dashboard_run_id)
+            if self._owns_dashboard:
+                self._dashboard.close()
 
     def __enter__(self):
         return self
@@ -152,8 +158,16 @@ def sample(*, model=None, until=None, initial_strategy=None, progress=True, dash
         handle.close()
 
 
-def _normalize_cache(*, model=None, until=None, initial_strategy=None, progress=True,
-                     dashboard=False, control=None, on_event=None, nuts_sampler=None, **sample_kwargs):
+def _normalize_cache(model, kwargs):
+    """Normalize a cache call made as ``hook(model, keyword_arguments)``."""
+    if not isinstance(kwargs, dict):
+        raise TypeError("kwargs must be a dictionary")
+    return _normalize_cache_kwargs(model, **kwargs)
+
+
+def _normalize_cache_kwargs(model, *, until=None, initial_strategy=None, progress=True,
+                            dashboard=False, control=None, on_event=None, nuts_sampler=None,
+                            **sample_kwargs):
     """Pure cache integration protocol: no dependency on or import of pymc-cache."""
     if control is not None or on_event is not None or sample_kwargs.get("callback") is not None:
         raise ValueError("live control and event callbacks are not cacheable")
@@ -164,7 +178,7 @@ def _normalize_cache(*, model=None, until=None, initial_strategy=None, progress=
                   "tune": request.settings["tune"], "chains": request.chains,
                   "random_seed": request.settings["seed"], "until": request.target,
                   "initial_strategy": initial_strategy, "nuts_sampler": sampler}
-    call_kwargs = dict(model=request.model, progress=progress, dashboard=dashboard, **key_kwargs)
+    call_kwargs = dict(progress=progress, dashboard=dashboard, **key_kwargs)
     versions = {}
     packages = ["pymc-monitor", "pymc", "arviz", "pytensor", "numpy"]
     if sampler == "nutpie":
