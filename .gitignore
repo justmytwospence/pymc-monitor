@@ -1,0 +1,15 @@
+.extraction-source/
+.venv*/
+.smoke*/
+__pycache__/
+.pytest_cache/
+.coverage
+.ruff_cache/
+dist/
+_site/
+.quarto/
+node_modules/
+test-results/
+playwright-report/
+.coverage.*
+htmlcov/

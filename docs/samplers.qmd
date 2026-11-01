@@ -1,0 +1,39 @@
+---
+title: Samplers and compatibility
+---
+
+## Installation
+
+The supported major pairs are PyMC 5.28 with ArviZ 0.x and PyMC 6 with ArviZ 1.x. Both use the same local diagnostics implementation. PyMC 5 returns `InferenceData`; PyMC 6 returns an xarray `DataTree`. Use `pymc_monitor.idata.get_group` and `group_names` when writing version-independent consumers. Python 3.11 or later is required; dependencies can impose a newer minimum for particular versions.
+
+```bash
+pip install 'pymc-monitor[nutpie,notebook]'
+# To stay on the PyMC 5 major pair:
+pip install 'pymc-monitor[nutpie,notebook]' 'pymc==5.28.*' 'arviz<1'
+```
+
+NumPy is capped below 2.5 because the older PyTensor/Numba pair used by PyMC 5 cannot support NumPy 2.5. No cloud transport or cache package is imported or installed by this project.
+
+## Dispatch and defaults
+
+| Sampler | Live progress | Adaptive stop | External stop |
+|---|---|---|---|
+| `pymc` | Per-chain draws and diagnostics | Yes | Cooperative callback interrupt |
+| `nutpie` | Native background progress and `inspect()` | Yes | `abort()` recovers partial draws |
+| `numpyro`, `blackjax` | Phase only; final diagnostics | Rejected | Waits for kernel completion |
+
+When omitted, `nuts_sampler` selects nutpie if installed for a continuous model, otherwise native PyMC. A user callback, custom `step`, or discrete free variable selects native PyMC. An explicit sampler is never silently replaced. Install `[jax]` for both JAX sampler libraries. JAX dispatch is tested with an injected sampler; no live per-draw JAX support is claimed.
+
+Defaults are 1000 posterior draws and `max(2, cores)` chains (with at most four default cores). Warmup is 400 for nutpie with PyMC 6, otherwise 1000. Explicit valid `draws`, `tune`, and `chains` are preserved. Nutpie requires at least one warmup draw; native PyMC permits `tune=0`. Use explicit seeds and sampler names for reproducibility.
+
+Native callbacks receive `trace` and `draw` exactly as in PyMC; monitoring composes with them. `KeyboardInterrupt` from a callback requests a stop. Other callback or sampler errors propagate. `initial_strategy="prior"` and `"support_point"` choose PyMC initial points; do not combine this with explicit `initvals`.
+
+Nutpie accepts native sampler settings including `target_accept`, `maxdepth` (or `max_treedepth`), `adaptation`, and `cores`. `nuts_sampler_kwargs` can group those settings. `compile_kwargs` go to `nutpie.compile_pymc_model`. Unsupported options raise rather than being ignored. Custom trace backends are not supported, because balanced partial-trace recovery depends on the standard PyMC trace.
+
+## Stop lifecycle
+
+`RunControl(poll=predicate)` latches a stop when the external predicate returns true. The predicate runs on the event-loop thread; keep it short and nonblocking. Poll errors stop sampling and propagate. Calling `stop()` is thread-safe and does not invoke the predicate.
+
+Native adaptive stops recover the common post-warmup prefix across all chains, preserving deterministics and sample statistics. Sequential chains may finish earlier chains before enough draws are available in the last chain to assess convergence. A stop before every chain has a posterior draw raises `SamplingStoppedError`; a subset of chains is never silently reported as the requested run. Nutpie's NaN-padded incomplete tail is trimmed. The final report always assesses the recovered inference data, not the checkpoint that triggered the stop.
+
+`start` owns its sampler thread and optional dashboard. `wait(timeout)` does not cancel on timeout. `close()` requests stop, joins the worker and closes the dashboard; repeated calls are safe. With JAX this can wait for the full run. Use a context manager to guarantee cleanup. `sample()` closes its own handle before returning, so its dashboard does not remain available afterward.

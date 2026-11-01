@@ -1,0 +1,54 @@
+---
+title: Local monitored sampling
+---
+
+Install with `pip install pymc-monitor` or `pip install pymc-monitor[nutpie,notebook]`.
+No Modal account, remote worker, or cache is needed.
+
+## Quick start
+
+This tiny example runs during the documentation build and checks the report.
+
+```{python}
+import pymc as pm
+import pymc_monitor as monitor
+
+with pm.Model() as model:
+    mu = pm.Normal("mu")
+    pm.Normal("y", mu, observed=[0.2, -0.1])
+
+idata = monitor.sample(model=model, draws=8, tune=8, chains=2, cores=1, progress=False)
+report = monitor.read_report(idata)
+assert report["draws"] == 8
+print(report["status"], report["draws"])
+```
+
+## Targets
+
+`until="final"` requires effective sample size 400, auto-scaled R-hat, zero
+post-warmup divergences, and BFMI >= 0.3. `until="draft"` uses ESS 100 and
+R-hat <= 1.05. For custom policy use a dictionary such as
+`until={"preset": "draft", "ess": 200, "patience": 3, "escalate": 1}`.
+`until=None` still attaches a display-only diagnostic report. Missing required
+HMC statistics fail closed. Every element of every free variable is assessed.
+Constrained samples are used for live diagnostics even when PyMC stores a
+transformed sampling value internally. Nested R-hat requires `superchains` to
+divide the total chain count.
+
+## Control and events
+
+Call `start(...)` to get a `SamplingHandle`: `wait(timeout=None)` returns
+InferenceData, `stop()` requests cancellation, `snapshot()` returns current
+state, `done` indicates completion, `close()` releases the dashboard and joins
+the run. If no complete post-warmup draw can be recovered on stop,
+`SamplingStoppedError` is raised. JAX samplers support phase-only progress and
+cannot stop early; adaptive `until` with JAX raises. Nutpie supports native
+`inspect()` checkpoints and `abort()` on stop. Pass `on_event` to receive typed
+phase, per-chain, and convergence updates, or use `iter_sample` directly.
+
+`dashboard=True` serves a per-run authenticated HTTP dashboard on
+`127.0.0.1`, with a bearer token in the URL fragment. The server rejects
+unauthorized state and stop requests and does not fetch third-party assets.
+Call `close()` when done with the dashboard. The `DashboardState` reducer and
+static HTML/JS/CSS are reusable by a remote consumer without importing its
+transport into this package.

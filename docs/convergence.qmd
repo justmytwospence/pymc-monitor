@@ -1,0 +1,50 @@
+---
+title: Convergence policies and reports
+---
+
+## Strict assessment
+
+Live diagnostics operate in constrained variable space. Every element of every monitored free variable is assessed, including vector and matrix parameters. A variable with no variation, a missing requested variable, or an unavailable required diagnostic cannot silently pass. One chain cannot satisfy an R-hat target. Use `r_hat=None` only when deliberately disabling that gate.
+
+`until=None` or `False` observes the complete run and attaches a report without adaptive stopping. `until=True` and `"final"` select ESS 400, auto-scaled rank-normalized split R-hat, zero divergences, and minimum E-BFMI 0.3. `"draft"` selects ESS 100 and R-hat 1.05; it reports but does not gate on HMC statistics. Non-HMC samplers generally require a draft or customized policy because HMC energy and divergence statistics are unavailable.
+
+A dictionary overlays a preset:
+
+```python
+policy = {
+    "preset": "final",
+    "ess": 800,
+    "mcse": 0.03,
+    "quantiles": True,
+    "patience": 3,
+    "growth": 1.3,
+    "futility": True,
+    "var_names": ["mu", "scale"],
+}
+```
+
+`mcse` is relative to posterior standard deviation, with optional 5%/95% quantile checks. `treedepth` is the allowed fraction of maximum-depth hits. Unknown keys, invalid limits and nonfinite targets raise. Missing energy for any chain fails a required BFMI gate, rather than assessing only the remaining chains.
+
+## Checkpoints and retries
+
+Checkpoints are geometrically spaced, starting at at least 50 draws per chain (or the smaller draw cap). `patience` consecutive passing checkpoints are needed to stop for convergence. Diagnostic failure raises and stops sampling: it never silently turns adaptive stopping off. Diagnostic thresholds are workflow aids, not proof that a posterior is correctly explored.
+
+The controller can stop for futility when divergences, poor BFMI, stalled R-hat or stalled ESS suggest that more draws will not help. `escalate=N` permits up to N fresh attempts using a conservative retry ladder: longer warmup, higher acceptance target, nutpie low-rank adaptation or a larger draw cap. The report retains attempt history. These are fresh runs, not concatenated chains. The final returned trace belongs to the last attempt.
+
+`superchains=K` groups chains by shared initial points and uses nested R-hat. K must divide the total chain count, with at least two chains per superchain. Explicit `initvals` and custom steps cannot be combined with managed superchain initialization. Membership is attached to the recovered posterior and reused by `check_convergence`.
+
+## Reading results
+
+`read_report(idata)` retrieves JSON stored under `posterior.attrs["pymc_monitor_convergence"]`. `check_convergence(idata, until=...)` independently assesses completed data. Reports contain `status`, `met`, `draws`, `chains`, `checks`, `failing`, `summary`, `cause`, `hint`, `projected_draws`, `target`, and optional `attempts`.
+
+- `met`: adaptive stopping satisfied the policy and the final recovered trace passes.
+- `cap`: the requested cap was reached, or recovery did not confirm the stopping checkpoint. Inspect `met` separately.
+- `futile`: the controller stopped because extending the run was unlikely to help.
+- `stopped`: a caller requested cancellation and a balanced partial trace was recovered.
+- `complete`: a non-adaptive run completed (including JAX despite a stop request).
+
+Nonfinite diagnostics become JSON `null`, not a passing number. A final `ConvergenceUpdate(final=True)` carries the recovered-trace verdict. For NetCDF portability across ArviZ majors, `pymc_monitor.idata.sanitize_inference_data(idata, copy=True)` normalizes sampler attributes before writing.
+
+## Statistical references
+
+The implementation follows Vehtari et al. (2021) for rank-normalized R-hat and ESS; Vats and Knudson (2021) for chain-count-aware thresholds; Margossian et al. (2024) for nested R-hat; and Cowles, Roberts and Rosenthal (1998) for caution about repeated convergence testing. Numerical diagnostics are tested against ArviZ 0.x reference calculations in the compatibility suite.

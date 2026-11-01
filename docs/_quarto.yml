@@ -1,0 +1,26 @@
+project:
+  type: website
+  output-dir: _site
+website:
+  title: pymc-monitor
+  navbar:
+    left:
+      - href: index.qmd
+        text: Guide
+      - href: samplers.qmd
+        text: Samplers
+      - href: convergence.qmd
+        text: Convergence
+      - href: dashboard.qmd
+        text: Dashboard
+      - href: examples.qmd
+        text: Examples
+      - href: api.qmd
+        text: API
+format:
+  html:
+    toc: true
+    theme: cosmo
+execute:
+  warning: false
+  message: false

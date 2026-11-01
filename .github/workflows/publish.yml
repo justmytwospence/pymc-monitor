@@ -1,0 +1,41 @@
+name: Publish
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --locked --group dev --group docs
+      - run: uv run --locked ruff check src tests scripts
+      - run: uv run --locked pytest -q --cov=pymc_monitor --cov-fail-under=85
+      - run: uv run --locked python scripts/check_version.py
+      - run: uv run --locked python -m build
+      - run: uv run --locked python scripts/check_artifact.py
+      - name: Smoke test the wheel and source distribution
+        run: |
+          for artifact in dist/*.whl dist/*.tar.gz; do
+            uv venv .smoke --clear
+            uv pip install --python .smoke/bin/python "$artifact"
+            .smoke/bin/python scripts/smoke.py
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: distributions
+          path: dist/
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: distributions
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1

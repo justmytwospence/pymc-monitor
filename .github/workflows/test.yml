@@ -1,0 +1,42 @@
+name: Test
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - python: '3.11'
+            pymc: '5.28.*'
+            arviz: '0.*'
+          - python: '3.12'
+            pymc: '5.28.*'
+            arviz: '0.*'
+          - python: '3.13'
+            pymc: '6.*'
+            arviz: '1.*'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv python install ${{ matrix.python }}
+      - run: uv sync --locked --group dev --group docs --python ${{ matrix.python }}
+      - run: uv pip install --python .venv/bin/python 'pymc==${{ matrix.pymc }}' 'arviz==${{ matrix.arviz }}' 'numpy<2.5'
+      - run: uv run --no-sync ruff check src tests scripts
+      - run: uv run --no-sync pytest -q --cov=pymc_monitor --cov-fail-under=85
+      - run: uv run --no-sync python scripts/check_version.py
+      - run: uv run --no-sync python -m build
+      - run: uv run --no-sync python scripts/check_artifact.py
+      - name: Installed artifact smoke tests
+        run: |
+          for artifact in dist/*.whl dist/*.tar.gz; do
+            uv venv .smoke --clear --python ${{ matrix.python }}
+            uv pip install --python .smoke/bin/python "$artifact" 'pymc==${{ matrix.pymc }}' 'arviz==${{ matrix.arviz }}' 'numpy<2.5'
+            .smoke/bin/python scripts/smoke.py
+          done
+      - name: Browser tests
+        if: matrix.python == '3.13'
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+          npm run test:browser

@@ -1,0 +1,76 @@
+---
+title: Executable examples
+---
+
+These tiny runs exercise the APIs during documentation builds. Their draw counts are intentionally too small for reliable inference.
+
+## Background handle
+
+```{python}
+import pymc as pm
+import pymc_monitor as monitor
+
+with pm.Model() as model:
+    scale = pm.HalfNormal("scale")
+    pm.Normal("observed", sigma=scale, observed=[0.1, -0.2, 0.3])
+
+with monitor.start(model=model, nuts_sampler="pymc", draws=8, tune=8,
+                   chains=2, cores=1, random_seed=42, progress=False) as handle:
+    idata = handle.wait(timeout=120)
+    assert handle.done
+    assert handle.snapshot()["report"] == monitor.read_report(idata)
+    print(handle.snapshot()["report"]["status"])
+```
+
+## Typed event stream
+
+```{python}
+stream = monitor.iter_sample(model, {"draws": 8, "tune": 8, "chains": 2,
+                                    "cores": 1, "random_seed": 42},
+                             nuts_sampler="pymc")
+events = []
+try:
+    while True:
+        try:
+            events.append(next(stream))
+        except StopIteration as end:
+            result = end.value
+            break
+finally:
+    stream.close()
+assert isinstance(result, monitor.SamplingResult)
+assert any(isinstance(event, monitor.ConvergenceUpdate) and event.final for event in events)
+print(result.report["draws"], "draws per chain")
+```
+
+## External cancellation
+
+An existing event loop or another thread can set a `threading.Event`. Pass its `is_set` predicate without introducing a transport dependency:
+
+```python
+import threading
+cancel = threading.Event()
+control = monitor.RunControl(poll=cancel.is_set)
+handle = monitor.start(model=model, until="draft", control=control)
+# From another thread: cancel.set(), or simply handle.stop().
+try:
+    idata = handle.wait()
+except monitor.SamplingStoppedError:
+    print("No balanced posterior draws were available")
+finally:
+    handle.close()
+```
+
+## Native callback composition
+
+```python
+seen = []
+def callback(*, trace, draw):
+    if not draw.tuning:
+        seen.append((draw.chain, draw.draw_idx))
+
+idata = monitor.sample(model=model, nuts_sampler="pymc", callback=callback,
+                       draws=1000, tune=1000, random_seed=42)
+```
+
+Native callbacks and `on_event` callbacks run on background threads. They must not mutate the model or call `handle.wait()` from inside the event consumer. An exception from either callback propagates to `wait()` and closes the sampler rather than silently ignoring it.
