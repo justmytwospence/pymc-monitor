@@ -167,6 +167,11 @@ class Dashboard:
                                                  token="", title=dashboard.title)
                     return HTMLResponse(html)
 
+                @app.get("/r/{run_id}/")
+                async def index_from_cookie(run_id: str):
+                    # Token-free reload URL, accessible only with the bootstrap cookie.
+                    return await index("", run_id)
+
                 @app.get("/assets/{name}")
                 async def asset(name: str):
                     if name not in assets or name == "dashboard.html":

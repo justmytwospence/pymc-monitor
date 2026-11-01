@@ -27,6 +27,10 @@ test('authenticated reusable dashboard isolates runs, renders safe traces and st
     expect(await page.evaluate(() => window.pwned)).toBeUndefined();
     await expect(page.locator('#phases img')).toHaveCount(0);
     await expect(page.locator('#status')).toContainText('Sampling in progress');
+    expect(new URL(page.url()).pathname).toBe(`/r/${runId}/`);
+    expect(page.url()).not.toContain(token);
+    await page.reload();
+    await expect(page.locator('#status')).toContainText('Sampling in progress');
     const response = await request.get(stateUrl, {headers: {Authorization: `Bearer ${token}`}});
     expect(response.status()).toBe(200);
     expect((await request.post(stopUrl, {headers: {Authorization: `Bearer ${token}`, Origin: 'https://evil.test'}})).status()).toBe(403);

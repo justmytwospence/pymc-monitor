@@ -1,7 +1,12 @@
 import { render } from "./renderer.js";
 const config = JSON.parse(document.getElementById("dashboard-config").textContent);
 const token = config.token || location.hash.slice(1);
-if (location.hash) history.replaceState(null, "", location.pathname);
+const segments = location.pathname.split("/");
+if (segments.length === 5 && segments[1] === "r" && segments[4] === "") {
+  history.replaceState(null, "", `/r/${segments[3]}/`);
+} else if (location.hash) {
+  history.replaceState(null, "", location.pathname);
+}
 const headers = token ? {Authorization: `Bearer ${token}`} : {};
 const $ = id => document.getElementById(id);
 let stopRequested = false;

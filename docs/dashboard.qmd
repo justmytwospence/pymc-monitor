@@ -18,7 +18,7 @@ finally:
     handle.close()
 ```
 
-Install the `dashboard` extra first. `Dashboard(*, port=0, title="pymc-monitor", idle_timeout=300)` binds a preallocated socket on `127.0.0.1`. A per-instance token in the navigation path grants an HttpOnly SameSite cookie; treat the URL as a credential. Non-browser API clients can send `Authorization: Bearer <token>`. Never put a token in query strings or expose this port publicly.
+Install the `dashboard` extra first. `Dashboard(*, port=0, title="pymc-monitor", idle_timeout=300)` binds a preallocated socket on `127.0.0.1`. A per-instance token in the initial navigation path grants an HttpOnly SameSite cookie; the browser then removes the token from its history and reloads through a cookie-only URL. Treat the original URL as a credential. Non-browser API clients can send `Authorization: Bearer <token>`. Never put a token in query strings or expose this port publicly.
 
 Every route, including assets, requires authentication and validates Host and Origin. Stop is POST-only; unknown runs return 404, and finished or already-stopping runs return 409. The service does not enable cross-origin requests. Static assets are bundled, with a restrictive Content Security Policy and no third-party scripts or analytics. All run-supplied names, errors and hints render as text, not executable HTML. Trace previews show at most 20 elements and 500 points per chain. They are diagnostic previews, not a replacement for posterior plots.
 

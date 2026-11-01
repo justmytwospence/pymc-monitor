@@ -52,7 +52,11 @@ def test_multi_run_security_stop_status_and_retention():
             get(base + "/assets/dashboard.js")
         assert exc.value.code == 403
         assert b"Multi-run" in cookie_client.open(url).read()
+        assert cookie_client.open(base + f"/r/{aid}/").status == 200
         assert cookie_client.open(base + f"/runs/{aid}/state").status == 200
+        with pytest.raises(urllib.error.HTTPError) as exc:
+            get(base + f"/r/{aid}/")
+        assert exc.value.code == 403
         for path in (f"/runs/{aid}/state", "/assets/dashboard.js"):
             for headers in ({"Host": "evil.test", **auth},
                             {"Origin": "https://evil.test", **auth},
