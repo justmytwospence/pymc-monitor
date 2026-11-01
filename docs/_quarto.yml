@@ -54,3 +54,4 @@ quartodoc:
         - Dashboard
         - DashboardState
         - render_dashboard_html
+        - dashboard_csp

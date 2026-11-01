@@ -31,4 +31,5 @@
 | --- | --- |
 | [Dashboard](Dashboard.qmd#pymc_monitor.Dashboard) | Reusable FastAPI/uvicorn loopback service; dependencies load only on start. |
 | [DashboardState](DashboardState.qmd#pymc_monitor.DashboardState) | Lock-protected reducer of local or cloud events; snapshots are JSON-safe copies. |
-| [render_dashboard_html](render_dashboard_html.qmd#pymc_monitor.render_dashboard_html) | Render shared UI with escaped, non-executable configuration for either transport. |
+| [render_dashboard_html](render_dashboard_html.qmd#pymc_monitor.render_dashboard_html) | Render a fully self-contained, transport-independent dashboard page. |
+| [dashboard_csp](dashboard_csp.qmd#pymc_monitor.dashboard_csp) | Hash the exact bundled inline assets and allow only explicit API origins. |

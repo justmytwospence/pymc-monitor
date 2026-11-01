@@ -19,7 +19,8 @@ for path in files:
     assert any("pymc_monitor/server.py" in member for member in members)
     if path.suffix != ".whl":
         assert any(member.endswith("docs/reference/index.qmd") for member in members)
-    for asset in ("dashboard.html", "dashboard.js", "dashboard.css", "renderer.js"):
+    for asset in ("dashboard.html", "dashboard.js", "dashboard.css", "uPlot.iife.min.js",
+                  "uPlot.min.css", "uPlot.LICENSE"):
         assert any(f"pymc_monitor/static/{asset}" in member for member in members)
     assert any(member.endswith("LICENSE") for member in members)
     forbidden = (".extraction-source", "cloudposterior/", ".git/", "__pycache__",

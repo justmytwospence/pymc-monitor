@@ -1,4 +1,5 @@
 """The three presentation surfaces share honest diagnostics and safe text."""
+import http.cookiejar
 import json
 import urllib.error
 import urllib.request
@@ -89,14 +90,15 @@ def test_http_assets_auth_origin_and_close():
     headers = {"Authorization": f"Bearer {token}"}
     try:
         assert service.start() is service
-        with urllib.request.urlopen(service.url(run_id)) as response:
+        jar = http.cookiejar.CookieJar()
+        opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+        with opener.open(service.url(run_id)) as response:
             assert response.status == 200
-            assert "HttpOnly" in response.headers["Set-Cookie"]
+            assert response.url == base + f"/r/{run_id}/"
             assert "frame-ancestors 'none'" in response.headers["Content-Security-Policy"]
             assert b"dashboard-config" in response.read()
-        for path in ["/assets/dashboard.js", "/assets/dashboard.css", "/assets/renderer.js"]:
-            with urllib.request.urlopen(urllib.request.Request(base + path, headers=headers)) as response:
-                assert response.status == 200 and response.read()
+        assert len(jar) == 1 and jar._cookies["127.0.0.1"]["/"]["pymc_monitor_token"].has_nonstandard_attr("HttpOnly")
+        assert "uPlot" in dashboard_assets()["uPlot.iife.min.js"].decode()
         for method, path, extra, status in [
             ("GET", "/unknown", {}, 404), ("POST", "/unknown", {}, 404),
             ("GET", f"/runs/{run_id}/stop", {}, 405),
@@ -116,7 +118,7 @@ def test_http_assets_auth_origin_and_close():
         with pytest.raises(urllib.error.HTTPError) as exc:
             urllib.request.urlopen(req)
         assert exc.value.code == 409
-        assert "renderer.js" in dashboard_assets()
+        assert "renderer.js" not in dashboard_assets()
     finally:
         service.close()
     service.close()
@@ -124,10 +126,11 @@ def test_http_assets_auth_origin_and_close():
 
 
 def test_shared_html_escapes_config_and_title():
-    html = render_dashboard_html(progress_url='</script><img src=x>', stop_url='/stop',
-                                 token='"</script>', title='<script>bad</script>')
+    html = render_dashboard_html(progress_url='/progress?name=</script><img>',
+                                 stop_url='/stop', token='"</script>',
+                                 title='<script>bad</script>')
     assert '<img src=x>' not in html and '<script>bad</script>' not in html
-    assert '\\u003c/script>' in html
+    assert '&lt;/script&gt;' in html
     assert '&lt;script&gt;bad&lt;/script&gt;' in html
 
 

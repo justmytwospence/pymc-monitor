@@ -1,7 +1,7 @@
 # render_dashboard_html { #pymc_monitor.render_dashboard_html }
 
 ```python
-render_dashboard_html(progress_url, stop_url, token, title)
+render_dashboard_html(progress_url, stop_url, token, title='pymc-monitor')
 ```
 
-Render shared UI with escaped, non-executable configuration for either transport.
+Render a fully self-contained, transport-independent dashboard page.

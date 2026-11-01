@@ -1,7 +1,7 @@
 """Local monitored PyMC sampling, independent of cloud transport and caching."""
 from .api import SamplingHandle, sample, start
 from .convergence import check_convergence, normalize_target, read_report
-from .dashboard import DashboardState, render_dashboard_html
+from .dashboard import DashboardState, dashboard_csp, render_dashboard_html
 from .events import (
            ChainProgress,
            ConvergenceUpdate,
@@ -22,5 +22,5 @@ __all__ = ["sample", "start", "iter_sample", "SamplingHandle", "RunControl", "Sa
            "SamplingStoppedError", "check_convergence", "read_report", "normalize_target",
            "ChainProgress", "ConvergenceUpdate", "JobPhase", "ParamConvergence", "PhaseUpdate",
            "SamplingProgress", "RunFinished", "event_to_dict", "event_from_dict",
-           "Dashboard", "DashboardState", "render_dashboard_html",
+           "Dashboard", "DashboardState", "dashboard_csp", "render_dashboard_html",
            "__version__"]

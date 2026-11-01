@@ -18,5 +18,7 @@ assert set(normalized) == {"call_kwargs", "key_kwargs", "sampler_identity", "ver
 assert "model" not in normalized["call_kwargs"]
 assert result.posterior.sizes["draw"] == 5
 assert importlib.metadata.version("pymc-monitor") == monitor.__version__ == "0.1.0"
-assert files("pymc_monitor").joinpath("static/renderer.js").is_file()
+assert files("pymc_monitor").joinpath("static/uPlot.iife.min.js").is_file()
+assert "<script>" in monitor.render_dashboard_html(progress_url="/progress", stop_url=None,
+                                                   token="")
 print("pymc-monitor smoke OK", report["status"], "PyMC", pm.__version__)

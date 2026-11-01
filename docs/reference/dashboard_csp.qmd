@@ -1,0 +1,7 @@
+# dashboard_csp { #pymc_monitor.dashboard_csp }
+
+```python
+dashboard_csp(progress_url, stop_url=None)
+```
+
+Hash the exact bundled inline assets and allow only explicit API origins.
