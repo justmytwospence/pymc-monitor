@@ -28,7 +28,7 @@ packages = ["src/pymc_monitor"]
 
 [tool.hatch.build.targets.sdist]
 include = ["src/pymc_monitor", "tests", "scripts", "docs", "README.md", "LICENSE", "CHANGELOG.md", "CONTRIBUTING.md", "SECURITY.md", "AGENTS.md", "pyproject.toml", "uv.lock", "package.json", "package-lock.json", "playwright.config.js"]
-exclude = [".extraction-source/**", "docs/_site/**", "docs/.quarto/**", "**/__pycache__/**"]
+exclude = [".extraction-source/**", "docs/_site/**", "docs/.quarto/**", "docs/objects.json", "**/__pycache__/**"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

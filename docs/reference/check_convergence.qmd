@@ -1,0 +1,13 @@
+# check_convergence { #pymc_monitor.check_convergence }
+
+```python
+check_convergence(idata, until=True, *, var_names=None)
+```
+
+Assess any InferenceData against a convergence target.
+
+Works on local or remote results. Returns the same report a remote
+``until=`` run stores on its result: ``met``, a one-line ``summary``,
+``failing`` checks, the likely ``cause`` with a ``hint``, and
+``projected_draws`` (draws per chain at which the target would be met if
+the problem is just slow mixing).

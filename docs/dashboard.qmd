@@ -18,14 +18,16 @@ finally:
     handle.close()
 ```
 
-The server binds to `127.0.0.1` on an ephemeral port. A random per-run bearer token travels in the URL fragment, not the HTTP query. The browser removes it from history and sends it only in an `Authorization` header. Treat the full URL as a credential. Reloading without the fragment requires reopening the original URL.
+Install the `dashboard` extra first. `Dashboard(*, port=0, title="pymc-monitor", idle_timeout=300)` binds a preallocated socket on `127.0.0.1`. A per-instance token in the navigation path grants an HttpOnly SameSite cookie; treat the URL as a credential. Non-browser API clients can send `Authorization: Bearer <token>`. Never put a token in query strings or expose this port publicly.
 
-State reads and stop requests require authentication. Stop is POST-only and validates Origin and Host; the service does not enable cross-origin requests. Static assets are bundled, with a restrictive Content Security Policy and no third-party scripts or analytics. All run-supplied names, errors and hints render as text, not executable HTML. Trace previews show at most 20 elements and 500 points per chain. They are diagnostic previews, not a replacement for posterior plots.
+Every route, including assets, requires authentication and validates Host and Origin. Stop is POST-only; unknown runs return 404, and finished or already-stopping runs return 409. The service does not enable cross-origin requests. Static assets are bundled, with a restrictive Content Security Policy and no third-party scripts or analytics. All run-supplied names, errors and hints render as text, not executable HTML. Trace previews show at most 20 elements and 500 points per chain. They are diagnostic previews, not a replacement for posterior plots.
 
 The server is local to the Python host. A notebook running remotely does not make that machine's loopback URL accessible on your laptop. Do not expose the server publicly or publish its token. Remote transport belongs in a separate application.
 
 ## Reusable presentation
 
-`DashboardState` is a lock-protected, transport-independent event reducer with `show_phase`, `show_sampling`, `show_convergence`, `request_stop`, `finish`, and `snapshot`. Snapshots are independent JSON-safe copies. `dashboard_assets()` returns bundled HTML, CSS and JavaScript bytes. `static/renderer.js` exports `render(state, root)` for consumers of the same schema; it has no sampler or HTTP dependencies.
+A shared `Dashboard()` can serve several `start(..., dashboard=dashboard)` handles; each has an isolated run URL and stop control. Removing one handle retains the others, and the idle server shuts down after `idle_timeout` seconds with no runs. Close the shared instance explicitly when done.
+
+`DashboardState(completion_phase="sampling")` is a lock-protected, transport-independent event reducer with `update(event)`, `show_phase`, `show_sampling`, `show_convergence`, `request_stop`, `finish(status)`, and `snapshot()`. Use `completion_phase="downloading"` to keep a cloud dashboard open after sampling ends. Snapshots are independent JSON-safe copies. `render_dashboard_html(*, progress_url, stop_url, token, title)` safely embeds a transport-specific configuration, and `dashboard_assets()` returns bundled HTML, CSS and JavaScript bytes. `static/renderer.js` exports `render(state, root)` for consumers of the same schema; it has no sampler or HTTP dependencies.
 
 A consuming application owns authentication and transport. It can dispatch typed events to the reducer and serve these assets without importing any cloud dependency into pymc-monitor. The local HTTP service is only one adapter for that state.

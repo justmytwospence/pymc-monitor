@@ -1,0 +1,11 @@
+# Dashboard { #pymc_monitor.Dashboard }
+
+```python
+Dashboard(port=0, title='pymc-monitor', idle_timeout=300)
+```
+
+Reusable FastAPI/uvicorn loopback service; dependencies load only on start.
+
+Each dashboard has its own secret. A one-time token-bearing navigation sets
+an HttpOnly SameSite cookie for browser asset/API requests; non-browser
+clients may use a Bearer header. Every route requires authentication.

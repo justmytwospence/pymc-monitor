@@ -13,6 +13,10 @@ result = monitor.sample(model=model, draws=5, tune=5, chains=2, cores=1,
 report = monitor.read_report(result)
 assert report is not None and report["draws"] == 5
 assert callable(monitor.sample.__pymc_cache_normalize__)
+normalized = monitor.sample.__pymc_cache_normalize__(model, {"draws": 5, "nuts_sampler": "pymc"})
+assert set(normalized) == {"call_kwargs", "key_kwargs", "sampler_identity", "versions"}
+assert "model" not in normalized["call_kwargs"]
+assert result.posterior.sizes["draw"] == 5
 assert importlib.metadata.version("pymc-monitor") == monitor.__version__ == "0.1.0"
 assert files("pymc_monitor").joinpath("static/renderer.js").is_file()
 print("pymc-monitor smoke OK", report["status"], "PyMC", pm.__version__)

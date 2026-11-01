@@ -1,0 +1,5 @@
+# PhaseUpdate { #pymc_monitor.PhaseUpdate }
+
+```python
+PhaseUpdate(phase, status, message, elapsed, progress=None)
+```

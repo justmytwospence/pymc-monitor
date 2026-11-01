@@ -1,0 +1,19 @@
+# iter_sample { #pymc_monitor.iter_sample }
+
+```python
+iter_sample(
+    model,
+    sample_kwargs,
+    *,
+    nuts_sampler=None,
+    until=None,
+    initial_strategy=None,
+    control=None,
+    sample_fn=None,
+)
+```
+
+Yield typed events; return ``SamplingResult`` as ``StopIteration.value``.
+
+The generator owns a worker thread for blocking PyMC/JAX calls and polls nutpie
+handles in the calling thread. Closing the iterator requests a cooperative stop.

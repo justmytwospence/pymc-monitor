@@ -1,0 +1,7 @@
+# render_dashboard_html { #pymc_monitor.render_dashboard_html }
+
+```python
+render_dashboard_html(progress_url, stop_url, token, title)
+```
+
+Render shared UI with escaped, non-executable configuration for either transport.

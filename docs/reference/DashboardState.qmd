@@ -1,0 +1,7 @@
+# DashboardState { #pymc_monitor.DashboardState }
+
+```python
+DashboardState(completion_phase='sampling')
+```
+
+Lock-protected reducer of local or cloud events; snapshots are JSON-safe copies.

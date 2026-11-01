@@ -1,0 +1,17 @@
+# start { #pymc_monitor.start }
+
+```python
+start(
+    model=None,
+    until=None,
+    initial_strategy=None,
+    progress=True,
+    dashboard=False,
+    control=None,
+    on_event=None,
+    nuts_sampler=None,
+    **sample_kwargs,
+)
+```
+
+Begin sampling in a background thread and return a control handle.

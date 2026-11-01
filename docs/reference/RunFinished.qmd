@@ -1,0 +1,5 @@
+# RunFinished { #pymc_monitor.RunFinished }
+
+```python
+RunFinished(status, report=None, message='')
+```

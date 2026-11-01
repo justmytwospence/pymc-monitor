@@ -1,0 +1,10 @@
+# RunControl { #pymc_monitor.RunControl }
+
+```python
+RunControl(stop_requested=None, *, poll=None)
+```
+
+Thread-safe stop flag with a throttled external predicate.
+
+Predicate failures warn once and are retried; they never abort sampling or
+silently disable future stop checks. A local stop always takes precedence.

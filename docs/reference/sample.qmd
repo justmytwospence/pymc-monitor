@@ -1,0 +1,17 @@
+# sample { #pymc_monitor.sample }
+
+```python
+sample(
+    model=None,
+    until=None,
+    initial_strategy=None,
+    progress=True,
+    dashboard=False,
+    control=None,
+    on_event=None,
+    nuts_sampler=None,
+    **sample_kwargs,
+)
+```
+
+Sample locally, display diagnostics, and return PyMC inference data.

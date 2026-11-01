@@ -1,0 +1,18 @@
+# SamplingHandle { #pymc_monitor.SamplingHandle }
+
+```python
+SamplingHandle(
+    model,
+    kwargs,
+    *,
+    until,
+    initial_strategy,
+    progress,
+    dashboard,
+    control,
+    on_event,
+    nuts_sampler,
+)
+```
+
+Owns a background sampling run and its optional loopback dashboard.

@@ -1,0 +1,5 @@
+# ConvergenceUpdate { #pymc_monitor.ConvergenceUpdate }
+
+```python
+ConvergenceUpdate(params, draws=0, traces=dict(), verdict=None, final=False)
+```

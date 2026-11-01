@@ -2,11 +2,11 @@
 title: Executable examples
 ---
 
-These tiny runs exercise the APIs during documentation builds. Their draw counts are intentionally too small for reliable inference.
+These examples are exercised by the sampler, lifecycle, and browser test suites, not by Quarto. Their draw counts are intentionally too small for reliable inference.
 
 ## Background handle
 
-```{python}
+```python
 import pymc as pm
 import pymc_monitor as monitor
 
@@ -24,7 +24,7 @@ with monitor.start(model=model, nuts_sampler="pymc", draws=8, tune=8,
 
 ## Typed event stream
 
-```{python}
+```python
 stream = monitor.iter_sample(model, {"draws": 8, "tune": 8, "chains": 2,
                                     "cores": 1, "random_seed": 42},
                              nuts_sampler="pymc")
@@ -50,7 +50,7 @@ An existing event loop or another thread can set a `threading.Event`. Pass its `
 ```python
 import threading
 cancel = threading.Event()
-control = monitor.RunControl(poll=cancel.is_set)
+control = monitor.RunControl(stop_requested=cancel.is_set)
 handle = monitor.start(model=model, until="draft", control=control)
 # From another thread: cancel.set(), or simply handle.stop().
 try:

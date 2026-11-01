@@ -1,0 +1,7 @@
+# event_to_dict { #pymc_monitor.event_to_dict }
+
+```python
+event_to_dict(event)
+```
+
+Encode a progress event for JSON/msgpack cloud transports (wire version 1).

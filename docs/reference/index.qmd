@@ -1,0 +1,34 @@
+# Generated API reference {.doc .doc-index}
+
+## Sampling and control
+
+| | |
+| --- | --- |
+| [sample](sample.qmd#pymc_monitor.sample) | Sample locally, display diagnostics, and return PyMC inference data. |
+| [start](start.qmd#pymc_monitor.start) | Begin sampling in a background thread and return a control handle. |
+| [iter_sample](iter_sample.qmd#pymc_monitor.iter_sample) | Yield typed events; return ``SamplingResult`` as ``StopIteration.value``. |
+| [SamplingHandle](SamplingHandle.qmd#pymc_monitor.SamplingHandle) | Owns a background sampling run and its optional loopback dashboard. |
+| [RunControl](RunControl.qmd#pymc_monitor.RunControl) | Thread-safe stop flag with a throttled external predicate. |
+| [SamplingResult](SamplingResult.qmd#pymc_monitor.SamplingResult) | Generator return value: recovered inference data and its final report. |
+
+## Diagnostics and events
+
+| | |
+| --- | --- |
+| [check_convergence](check_convergence.qmd#pymc_monitor.check_convergence) | Assess any InferenceData against a convergence target. |
+| [read_report](read_report.qmd#pymc_monitor.read_report) | The convergence report a pymc_monitor run attached, if any. |
+| [normalize_target](normalize_target.qmd#pymc_monitor.normalize_target) | Resolve an ``until=`` value into a complete target dict (or None). |
+| [PhaseUpdate](PhaseUpdate.qmd#pymc_monitor.PhaseUpdate) |  |
+| [SamplingProgress](SamplingProgress.qmd#pymc_monitor.SamplingProgress) |  |
+| [ConvergenceUpdate](ConvergenceUpdate.qmd#pymc_monitor.ConvergenceUpdate) |  |
+| [RunFinished](RunFinished.qmd#pymc_monitor.RunFinished) |  |
+| [event_to_dict](event_to_dict.qmd#pymc_monitor.event_to_dict) | Encode a progress event for JSON/msgpack cloud transports (wire version 1). |
+| [event_from_dict](event_from_dict.qmd#pymc_monitor.event_from_dict) | Decode both version-1 and legacy cloud messages; skip unknown types. |
+
+## Dashboard
+
+| | |
+| --- | --- |
+| [Dashboard](Dashboard.qmd#pymc_monitor.Dashboard) | Reusable FastAPI/uvicorn loopback service; dependencies load only on start. |
+| [DashboardState](DashboardState.qmd#pymc_monitor.DashboardState) | Lock-protected reducer of local or cloud events; snapshots are JSON-safe copies. |
+| [render_dashboard_html](render_dashboard_html.qmd#pymc_monitor.render_dashboard_html) | Render shared UI with escaped, non-executable configuration for either transport. |

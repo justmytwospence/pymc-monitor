@@ -1,11 +1,24 @@
 """Check key pages and public API anchors after Quarto render."""
+import json
+import tomllib
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 root = Path("docs/_site")
+config = Path("docs/_quarto.yml").read_text()
+assert "  enabled: false" in config, "Quarto execution must be disabled"
+assert "quartodoc:" in config
+version = tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"]
+assert json.loads(Path("docs/objects.json").read_text())["version"] == version
+for example in ("docs/index.qmd", "docs/examples.qmd"):
+    assert "```{python}" not in Path(example).read_text(), example
+for name in ("Dashboard", "DashboardState", "RunControl", "RunFinished",
+             "event_from_dict", "event_to_dict", "render_dashboard_html"):
+    assert (Path("docs/reference") / f"{name}.qmd").exists(), name
 for name, expected in {"index.html": ("pymc-monitor", "Quick start"),
                        "api.html": ("API reference", "SamplingHandle"),
+                       "reference/index.html": ("Generated API reference", "Dashboard"),
                        "samplers.html": ("Samplers and compatibility", "Stop lifecycle"),
                        "convergence.html": ("Convergence policies", "Checkpoints"),
                        "dashboard.html": ("Authenticated localhost", "Reusable presentation"),

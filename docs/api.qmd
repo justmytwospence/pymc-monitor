@@ -6,8 +6,8 @@ title: API reference
 
 - `sample(*, model=None, until=None, initial_strategy=None, progress=True, dashboard=False, control=None, on_event=None, nuts_sampler=None, **sample_kwargs) -> InferenceData | DataTree`: synchronous local sample; all remaining keywords pass to the sampler.
 - `start(...) -> SamplingHandle`: identical parameters, runs in a background thread.
-- `iter_sample(model, sample_kwargs, *, nuts_sampler=None, until=None, initial_strategy=None, control=None, sample_fn=None)`: yields `PhaseUpdate`, `SamplingProgress`, `ConvergenceUpdate`; the generator's return value is `SamplingResult(idata, report)`.
-- `RunControl(poll=None)` accepts a zero-argument external stop predicate. `.poll()` invokes it and latches true; `.stopped` reads the thread-safe flag. `.stop()` requests a cooperative stop. Poll errors propagate. JAX cannot abort a running kernel.
+- `iter_sample(model, sample_kwargs, *, nuts_sampler=None, until=None, initial_strategy=None, control=None, sample_fn=None)`: yields `PhaseUpdate`, `SamplingProgress`, `ConvergenceUpdate`, `RunFinished`; the generator's return value is `SamplingResult(idata, report, effective_sampler)`.
+- `RunControl(stop_requested=None)` accepts a zero-argument external stop predicate. `.is_stop_requested()` invokes it at most every 0.5 seconds and latches true; `.stopped` reads the thread-safe local flag. `.request_stop()` requests a cooperative stop. Poll failures warn once without aborting sampling; `poll` and `stop` remain aliases. JAX cannot abort a running kernel.
 - `SamplingHandle.wait(timeout=None)`, `.stop()`, `.close()`, `.done`, `.snapshot()`, `.dashboard_url` manage a background run.
 - `check_convergence(idata, until=True, *, var_names=None) -> dict`: independently assess any ArviZ 0.x InferenceData / 1.x DataTree.
 - `read_report(idata) -> dict | None`: read the report attached to `posterior.attrs`.
@@ -15,9 +15,11 @@ title: API reference
 
 ## Caching integration
 
-`sample.__pymc_cache_normalize__(**call_arguments)` returns a dictionary with
-`call_kwargs` (resolved, executable call arguments including the model), `key_kwargs` (resolved sampler inputs and normalized policy, excluding display and the separately identified model), `sampler_identity`, and `versions`. It does not
+`sample.__pymc_cache_normalize__(model, kwargs)` takes exactly two positional arguments and returns exactly four fields:
+`call_kwargs` (resolved, executable keyword arguments excluding the separately passed model), `key_kwargs` (resolved sampler inputs and normalized policy, excluding display and the separately identified model), `sampler_identity`, and `versions`. It does not
 import or depend on the cache package. Live controls, native callbacks and event callbacks cannot be cached and raise `ValueError` when passed to the normalizer. Execution and normalization use the same resolver: equivalent omitted/explicit draw, warmup, chain and policy defaults produce equivalent keys. Sampler dependencies are included in `versions` (including JAX libraries for JAX samplers).
+
+The full generated object reference lives in [Generated API reference](reference/index.qmd).
 
 ## Policy keys
 

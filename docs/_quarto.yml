@@ -17,10 +17,40 @@ website:
         text: Examples
       - href: api.qmd
         text: API
+      - href: reference/index.qmd
+        text: Generated reference
 format:
   html:
     toc: true
     theme: cosmo
 execute:
-  warning: false
-  message: false
+  enabled: false
+quartodoc:
+  package: pymc_monitor
+  dir: reference
+  title: Generated API reference
+  sections:
+    - title: Sampling and control
+      contents:
+        - sample
+        - start
+        - iter_sample
+        - SamplingHandle
+        - RunControl
+        - SamplingResult
+    - title: Diagnostics and events
+      contents:
+        - check_convergence
+        - read_report
+        - normalize_target
+        - PhaseUpdate
+        - SamplingProgress
+        - ConvergenceUpdate
+        - RunFinished
+        - event_to_dict
+        - event_from_dict
+    - title: Dashboard
+      contents:
+        - Dashboard
+        - DashboardState
+        - render_dashboard_html

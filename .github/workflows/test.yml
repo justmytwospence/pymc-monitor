@@ -17,10 +17,10 @@ jobs:
             pymc: '6.*'
             arviz: '1.*'
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
       - run: uv python install ${{ matrix.python }}
-      - run: uv sync --locked --group dev --group docs --python ${{ matrix.python }}
+      - run: uv sync --no-config --locked --group dev --group docs --extra dashboard --python ${{ matrix.python }}
       - run: uv pip install --python .venv/bin/python 'pymc==${{ matrix.pymc }}' 'arviz==${{ matrix.arviz }}' 'numpy<2.5'
       - run: uv run --no-sync ruff check src tests scripts
       - run: uv run --no-sync pytest -q --cov=pymc_monitor --cov-fail-under=85
@@ -31,8 +31,9 @@ jobs:
         run: |
           for artifact in dist/*.whl dist/*.tar.gz; do
             uv venv .smoke --clear --python ${{ matrix.python }}
-            uv pip install --python .smoke/bin/python "$artifact" 'pymc==${{ matrix.pymc }}' 'arviz==${{ matrix.arviz }}' 'numpy<2.5'
+            uv pip install --python .smoke/bin/python "${artifact}[dashboard]" 'pymc==${{ matrix.pymc }}' 'arviz==${{ matrix.arviz }}' 'numpy<2.5'
             .smoke/bin/python scripts/smoke.py
+            .smoke/bin/python scripts/smoke_dashboard.py
           done
       - name: Browser tests
         if: matrix.python == '3.13'

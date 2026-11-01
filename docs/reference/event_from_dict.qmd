@@ -1,0 +1,7 @@
+# event_from_dict { #pymc_monitor.event_from_dict }
+
+```python
+event_from_dict(data)
+```
+
+Decode both version-1 and legacy cloud messages; skip unknown types.

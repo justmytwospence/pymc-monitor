@@ -2,14 +2,20 @@
 title: Local monitored sampling
 ---
 
-Install with `pip install pymc-monitor` or `pip install pymc-monitor[nutpie,notebook]`.
-No Modal account, remote worker, or cache is needed.
+Before PyPI publication, install from the Git source once the repository is available:
+
+```bash
+python -m pip install 'pymc-monitor @ git+https://github.com/justmytwospence/pymc-monitor.git@main'
+```
+
+Install the `dashboard`, `nutpie`, or `notebook` extras as needed. No Modal account,
+remote worker, or cache is needed.
 
 ## Quick start
 
-This tiny example runs during the documentation build and checks the report.
+This tiny example is covered by the sampling tests. Quarto does not execute code.
 
-```{python}
+```python
 import pymc as pm
 import pymc_monitor as monitor
 
@@ -46,9 +52,11 @@ cannot stop early; adaptive `until` with JAX raises. Nutpie supports native
 `inspect()` checkpoints and `abort()` on stop. Pass `on_event` to receive typed
 phase, per-chain, and convergence updates, or use `iter_sample` directly.
 
-`dashboard=True` serves a per-run authenticated HTTP dashboard on
-`127.0.0.1`, with a bearer token in the URL fragment. The server rejects
-unauthorized state and stop requests and does not fetch third-party assets.
-Call `close()` when done with the dashboard. The `DashboardState` reducer and
-static HTML/JS/CSS are reusable by a remote consumer without importing its
-transport into this package.
+`dashboard=True` serves an authenticated FastAPI dashboard on `127.0.0.1`
+(requires the `dashboard` extra). A per-instance token is embedded in the local
+navigation URL and exchanged for an HttpOnly cookie; non-browser callers may
+use a Bearer header. Host and Origin are checked on every request. For multiple
+models, pass the same `Dashboard()` instance to each `start(..., dashboard=dashboard)`;
+closing one handle does not close the other's run. Call `dashboard.close()` when done.
+`DashboardState(completion_phase="downloading")` and `render_dashboard_html` are
+transport-neutral and reusable by a cloud consumer.

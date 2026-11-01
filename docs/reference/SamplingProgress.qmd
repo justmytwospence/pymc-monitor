@@ -1,0 +1,11 @@
+# SamplingProgress { #pymc_monitor.SamplingProgress }
+
+```python
+SamplingProgress(
+    chains,
+    total_divergences=0,
+    elapsed=0.0,
+    total_draws=0,
+    warnings=list(),
+)
+```

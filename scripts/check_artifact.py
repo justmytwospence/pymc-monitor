@@ -16,12 +16,21 @@ for path in files:
         with open_tar(path, "r:gz") as artifact:
             members = artifact.getnames()
     assert any("pymc_monitor/convergence.py" in member for member in members)
+    assert any("pymc_monitor/server.py" in member for member in members)
+    if path.suffix != ".whl":
+        assert any(member.endswith("docs/reference/index.qmd") for member in members)
     for asset in ("dashboard.html", "dashboard.js", "dashboard.css", "renderer.js"):
         assert any(f"pymc_monitor/static/{asset}" in member for member in members)
     assert any(member.endswith("LICENSE") for member in members)
-    forbidden = (".extraction-source", "cloudposterior/", ".git/", "__pycache__", "docs/_site", "docs/.quarto")
+    forbidden = (".extraction-source", "cloudposterior/", ".git/", "__pycache__",
+                 "docs/_site", "docs/.quarto", "docs/objects.json")
     assert not any(any(part in member for part in forbidden) for member in members)
     print(path, len(members), "files OK")
+
+metadata = tomllib.loads(Path("pyproject.toml").read_text())["project"]
+assert {"fastapi", "uvicorn"} <= {entry.split(">=")[0] for entry in
+                                    metadata["optional-dependencies"]["dashboard"]}
+assert not any("modal" in dep or "cache" in dep for dep in metadata["dependencies"])
 
 for source in Path("src/pymc_monitor").rglob("*.py"):
     tree = ast.parse(source.read_text())

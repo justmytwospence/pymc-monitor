@@ -1,0 +1,14 @@
+# normalize_target { #pymc_monitor.normalize_target }
+
+```python
+normalize_target(until)
+```
+
+Resolve an ``until=`` value into a complete target dict (or None).
+
+- ``None`` / ``False`` -> None (no adaptive stopping)
+- ``True`` -> the ``"final"`` preset
+- ``"final"`` / ``"draft"`` -> that preset
+- a dict -> overrides on top of ``dict["preset"]`` (default ``"final"``)
+
+Unknown keys raise, so a typo cannot silently disable a check.

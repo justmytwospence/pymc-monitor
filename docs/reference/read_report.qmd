@@ -1,0 +1,7 @@
+# read_report { #pymc_monitor.read_report }
+
+```python
+read_report(idata)
+```
+
+The convergence report a pymc_monitor run attached, if any.
