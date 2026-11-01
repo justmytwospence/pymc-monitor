@@ -28,6 +28,7 @@ class SamplingRequest:
     ids: list[int] | None
     chains: int
     settings: dict
+    tune_default: bool
     initial_strategy: str | None
     control: RunControl
 
@@ -65,7 +66,8 @@ def resolve(model, sample_kwargs, *, nuts_sampler=None, until=None, initial_stra
         raise ValueError("JAX samplers cannot stream draws for adaptive stopping; choose pymc or nutpie")
     draws = kwargs.pop("draws", 1000)
     tune = kwargs.pop("tune", None)
-    if tune is None:
+    tune_default = tune is None
+    if tune_default:
         tune = 400 if sampler == "nutpie" and pymc_major() >= 6 else 1000
     chains = kwargs.pop("chains", None)
     cores = kwargs.get("cores")
@@ -100,4 +102,4 @@ def resolve(model, sample_kwargs, *, nuts_sampler=None, until=None, initial_stra
     return SamplingRequest(model, sampler, target, list(names), ids, chains,
                            {"draws": draws, "tune": tune,
                             "seed": kwargs.pop("random_seed", None), "extra": kwargs},
-                           initial_strategy, control)
+                           tune_default, initial_strategy, control)

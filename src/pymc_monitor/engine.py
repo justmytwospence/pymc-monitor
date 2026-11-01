@@ -5,6 +5,7 @@ import inspect
 import queue
 import threading
 import time
+import warnings
 
 import numpy as np
 
@@ -159,6 +160,36 @@ def _next_rung(report, settings, sampler, applied):
     return next_rung(report, settings, sampler, applied)
 
 
+class _NutpiePreparationError(Exception):
+    """Import or compilation failed before a nutpie sampling handle was started."""
+
+
+def _native_fallback_kwargs(kwargs):
+    """Translate portable nutpie options; never silently discard sampler settings."""
+    kw = dict(kwargs)
+    nested = kw.pop("nuts_sampler_kwargs", {}) or {}
+    if not isinstance(nested, dict):
+        raise TypeError("nuts_sampler_kwargs must be a dictionary")
+    if set(kw) & set(nested):
+        raise ValueError("duplicate native settings in nuts_sampler_kwargs")
+    kw.update(nested)
+    compile_kw = kw.pop("compile_kwargs", None)
+    if compile_kw:
+        raise ValueError("compile_kwargs cannot be translated to native PyMC")
+    if "maxdepth" in kw:
+        if "max_treedepth" in kw:
+            raise ValueError("specify only one of maxdepth and max_treedepth")
+        kw["max_treedepth"] = kw.pop("maxdepth")
+    nutpie_only = {"adaptation", "max_energy_error", "store_divergences", "store_gradient",
+                   "store_mass_matrix", "use_grad_based_mass_matrix", "init_mean",
+                   "progress_template", "progress_style", "progress_rate", "zarr_store",
+                   "store_unconstrained", "save_warmup"}
+    rejected = sorted(nutpie_only & kw.keys())
+    if rejected:
+        raise ValueError(f"nutpie options cannot be translated to native PyMC: {rejected}")
+    return kw
+
+
 def iter_sample(model, sample_kwargs, *, nuts_sampler=None, until=None, initial_strategy=None,
                 control=None, sample_fn=None):
     """Yield typed events; return ``SamplingResult`` as ``StopIteration.value``.
@@ -173,6 +204,7 @@ def iter_sample(model, sample_kwargs, *, nuts_sampler=None, until=None, initial_
     request = resolve(model, sample_kwargs, nuts_sampler=nuts_sampler, until=until,
                       initial_strategy=initial_strategy, control=control)
     model, sampler, target = request.model, request.sampler, request.target
+    requested_sampler = sampler
     chains, ids, names = request.chains, request.ids, request.names
     control, settings = request.control, request.settings
     # Even display-only runs use the same final policy and a full report.
@@ -187,15 +219,32 @@ def iter_sample(model, sample_kwargs, *, nuts_sampler=None, until=None, initial_
         yield _phase("in_progress", "sampling started")
         for attempt in range(1 + (target or {}).get("escalate", 0)):
             controller = cv.Controller(policy, chains, settings["draws"], stop=bool(target))
-            stream = _once(model, sampler, settings, chains, names, ids, initial_strategy,
-                           control, sample_fn or pm.sample, controller)
-            try:
-                while True:
-                    yield next(stream)
-            except StopIteration as end:
-                idata, decision = end.value
-            finally:
-                stream.close()
+            while True:
+                stream = _once(model, sampler, settings, chains, names, ids, initial_strategy,
+                               control, sample_fn or pm.sample, controller)
+                try:
+                    while True:
+                        yield next(stream)
+                except StopIteration as end:
+                    idata, decision = end.value
+                    break
+                except _NutpiePreparationError as exc:
+                    if nuts_sampler is not None or sampler != "nutpie" or attempt != 0:
+                        raise exc.__cause__ from exc
+                    native_kwargs = _native_fallback_kwargs(sample_kwargs)
+                    native = resolve(model, native_kwargs, nuts_sampler="pymc", until=until,
+                                     initial_strategy=initial_strategy, control=control)
+                    settings = native.settings
+                    sampler = native.sampler
+                    message = (f"automatically selected {requested_sampler} failed before sampling; "
+                               f"falling back to {sampler} "
+                               f"(requested_sampler={requested_sampler}, effective_sampler={sampler}): "
+                               f"{exc.__cause__}")
+                    warnings.warn(message, RuntimeWarning, stacklevel=2)
+                    yield _phase("in_progress", message, time.monotonic() - started)
+                    controller = cv.Controller(policy, chains, settings["draws"], stop=bool(target))
+                finally:
+                    stream.close()
             idata = trim_incomplete_draws(to_inference_data(idata))
             if control.stopped and sampler not in ("numpyro", "blackjax"):
                 status = "stopped"
@@ -205,6 +254,9 @@ def iter_sample(model, sample_kwargs, *, nuts_sampler=None, until=None, initial_
                 status = "cap" if target else "complete"
             report, final_event = _assessment(idata, names, ids, policy, controller, status,
                                                decision, attempts)
+            report["requested_sampler"] = requested_sampler
+            report["effective_sampler"] = sampler
+            cv.attach_report(idata, report)
             yield final_event
             status = report["status"]
             attempts.append({"attempt": attempt + 1, "status": status, "draws": settings["draws"],
@@ -220,7 +272,7 @@ def iter_sample(model, sample_kwargs, *, nuts_sampler=None, until=None, initial_
             yield _phase("done", cv.verdict_message(report), time.monotonic() - started)
             completed = True
             yield RunFinished(status, report)
-            return SamplingResult(idata, report, sampler)
+            return SamplingResult(idata, report, sampler, requested_sampler)
     except Exception as exc:
         yield _phase("error", str(exc), time.monotonic() - started)
         yield RunFinished("error", message=str(exc))
@@ -320,7 +372,10 @@ def _once(model, sampler, settings, chains, names, ids, init, control, sample_fn
                     checkpoint.wait(timeout=0.05)
 
     if sampler == "nutpie":
-        import nutpie
+        try:
+            import nutpie
+        except (ImportError, OSError) as exc:
+            raise _NutpiePreparationError from exc
 
         from .policies import split_nutpie_kwargs
         # PyMC common options are translated, never silently ignored.
@@ -346,7 +401,14 @@ def _once(model, sampler, settings, chains, names, ids, init, control, sample_fn
         if rejected:
             raise ValueError(f"unsupported nutpie sample arguments: {sorted(rejected)}")
         yield _phase("in_progress", "compiling model with nutpie", phase=JobPhase.COMPILING)
-        compiled = nutpie.compile_pymc_model(model, **compile_kw)
+        try:
+            compiled = nutpie.compile_pymc_model(model, **compile_kw)
+        except (TypeError, ValueError):
+            # Invalid compile options are caller errors, not a reason to change samplers.
+            raise
+        except Exception as exc:
+            # Includes backend compiler errors such as numba TypingError.
+            raise _NutpiePreparationError from exc
         yield _phase("done", "nutpie compilation complete", phase=JobPhase.COMPILING)
         if control.poll():
             raise SamplingStoppedError("sampling stopped during compilation")

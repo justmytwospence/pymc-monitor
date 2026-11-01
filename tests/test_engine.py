@@ -589,6 +589,173 @@ def test_escalation_attempt_history(model, idata, monkeypatch):
     assert monitor.read_report(result.idata) == result.report
 
 
+@pytest.mark.parametrize("compiler_error", [RuntimeError, Exception])
+def test_auto_nutpie_compile_falls_back_once_with_native_defaults(model, idata, monkeypatch,
+                                                                compiler_error):
+    import nutpie
+
+    monkeypatch.setattr(request, "pymc_major", lambda: 6)
+    monkeypatch.setattr(request, "find_spec", lambda _: object())
+    compiled = []
+    def fail_compile(*args, **kwargs):
+        compiled.append(True)
+        raise compiler_error("compiler unavailable")
+    monkeypatch.setattr(nutpie, "compile_pymc_model", fail_compile)
+    calls = []
+    def native(**kwargs):
+        calls.append(kwargs)
+        return idata
+    with pytest.warns(RuntimeWarning, match="automatically selected nutpie"):
+        events, result = drain(engine.iter_sample(model, {"draws": 12, "chains": 2,
+            "cores": 1, "maxdepth": 9, "target_accept": .9}, sample_fn=native))
+    assert len(compiled) == len(calls) == 1
+    assert calls[0]["nuts_sampler"] == "pymc"
+    assert calls[0]["tune"] == 1000  # not the auto nutpie 400
+    assert calls[0]["max_treedepth"] == 9 and calls[0]["target_accept"] == .9
+    assert result.requested_sampler == result.report["requested_sampler"] == "nutpie"
+    assert result.effective_sampler == result.report["effective_sampler"] == "pymc"
+    assert monitor.read_report(result.idata) == result.report
+    assert events[-1].report == result.report
+    assert any("nutpie" in e.message and "pymc" in e.message
+               for e in events if isinstance(e, PhaseUpdate))
+
+
+@pytest.mark.parametrize("extra,expected", [
+    ({"tune": 7, "nuts_sampler_kwargs": {"target_accept": .93, "maxdepth": 8}},
+     {"tune": 7, "target_accept": .93, "max_treedepth": 8}),
+    ({"tune": None}, {"tune": 1000}),
+])
+def test_auto_fallback_preserves_explicit_settings(model, idata, monkeypatch, extra, expected):
+    import nutpie
+
+    monkeypatch.setattr(request, "pymc_major", lambda: 6)
+    monkeypatch.setattr(request, "find_spec", lambda _: object())
+    monkeypatch.setattr(nutpie, "compile_pymc_model", lambda *a, **k: (_ for _ in ()).throw(
+        RuntimeError("compile failed")))
+    calls = []
+    with pytest.warns(RuntimeWarning, match="falling back"):
+        drain(engine.iter_sample(model, {"chains": 2, **extra},
+                                 sample_fn=lambda **kw: calls.append(kw) or idata))
+    assert all(calls[0][key] == value for key, value in expected.items())
+
+
+@pytest.mark.parametrize("extra", [
+    {"adaptation": "low_rank"}, {"compile_kwargs": {"backend": "jax"}},
+    {"nuts_sampler_kwargs": {"store_gradient": True}},
+])
+def test_auto_fallback_rejects_untranslatable_options(model, monkeypatch, extra):
+    import nutpie
+
+    def sample(compiled, *, adaptation="diag", save_warmup=False, **kwargs):
+        pytest.fail("nutpie sampling must not start")
+    monkeypatch.setattr(nutpie, "sample", sample)
+    monkeypatch.setattr(request, "find_spec", lambda _: object())
+    monkeypatch.setattr(nutpie, "compile_pymc_model", lambda *a, **k: (_ for _ in ()).throw(
+        RuntimeError("compile failed")))
+    native_calls = []
+    with pytest.raises(ValueError, match="cannot be translated"):
+        drain(engine.iter_sample(model, {"chains": 2, **extra},
+                                 sample_fn=lambda **kw: native_calls.append(kw)))
+    assert not native_calls
+
+
+def test_auto_nutpie_import_failure_falls_back(model, idata, monkeypatch):
+    import builtins
+
+    monkeypatch.setattr(request, "find_spec", lambda _: object())
+    original_import = builtins.__import__
+    def fail_import(name, *args, **kwargs):
+        if name == "nutpie":
+            raise ImportError("nutpie extension missing")
+        return original_import(name, *args, **kwargs)
+    monkeypatch.setattr(builtins, "__import__", fail_import)
+    calls = []
+    with pytest.warns(RuntimeWarning, match="nutpie extension missing"):
+        _, result = drain(engine.iter_sample(model, {"chains": 2},
+            sample_fn=lambda **kw: calls.append(kw) or idata))
+    assert len(calls) == 1 and calls[0]["nuts_sampler"] == "pymc"
+    assert result.report["requested_sampler"] == "nutpie"
+
+
+def test_explicit_nutpie_compile_failure_never_falls_back(model, monkeypatch):
+    import nutpie
+
+    calls = []
+    def fail(*a, **k):
+        calls.append(True)
+        raise RuntimeError("compile failed")
+    monkeypatch.setattr(nutpie, "compile_pymc_model", fail)
+    with pytest.raises(RuntimeError, match="compile failed"):
+        drain(engine.iter_sample(model, {"chains": 2}, nuts_sampler="nutpie",
+                                 sample_fn=lambda **kw: pytest.fail("native rerun")))
+    assert calls == [True]
+
+
+def test_auto_nutpie_launch_and_validation_failures_do_not_retry(model, monkeypatch):
+    import nutpie
+
+    monkeypatch.setattr(request, "find_spec", lambda _: object())
+    for error in (ValueError("invalid compile option"), RuntimeError("sampling failed")):
+        calls = []
+        def compile_model(*a, **k):
+            if isinstance(error, ValueError):
+                raise error
+            return object()
+        def fail_sample(*a, save_warmup=False, **k):
+            calls.append(True)
+            raise error
+        monkeypatch.setattr(nutpie, "compile_pymc_model", compile_model)
+        monkeypatch.setattr(nutpie, "sample", fail_sample)
+        with pytest.raises(type(error), match=str(error)):
+            drain(engine.iter_sample(model, {"chains": 2},
+                                     sample_fn=lambda **kw: pytest.fail("native rerun")))
+        assert calls == ([] if isinstance(error, ValueError) else [True])
+
+
+def test_cache_auto_call_preserves_fallback_intent(model, monkeypatch):
+    monkeypatch.setattr(request, "pymc_major", lambda: 6)
+    monkeypatch.setattr(request, "find_spec", lambda _: object())
+    normalizer = monitor.sample.__pymc_cache_normalize__
+    auto = normalizer(model, {"cores": 1})
+    assert auto["sampler_identity"] == auto["key_kwargs"]["nuts_sampler"] == "nutpie"
+    assert auto["key_kwargs"]["tune"] == 400
+    assert auto["call_kwargs"]["nuts_sampler"] is None
+    assert "tune" not in auto["call_kwargs"]
+    explicit = normalizer(model, {"cores": 1, "nuts_sampler": "nutpie", "tune": 400})
+    assert explicit["call_kwargs"]["nuts_sampler"] == "nutpie"
+    assert explicit["call_kwargs"]["tune"] == 400
+
+
+def test_sample_and_start_keep_auto_intent_through_handle(model, idata, monkeypatch):
+    import nutpie
+
+    monkeypatch.setattr(request, "find_spec", lambda _: object())
+    monkeypatch.setattr(request, "pymc_major", lambda: 6)
+    monkeypatch.setattr(nutpie, "compile_pymc_model", lambda *a, **k: (_ for _ in ()).throw(
+        RuntimeError("compiler unavailable")))
+    native_tunes = []
+    original = engine._once
+    def instrumented(model, sampler, settings, *args):
+        if sampler == "nutpie":
+            return original(model, sampler, settings, *args)
+        def native():
+            native_tunes.append(settings["tune"])
+            yield from ()
+            return idata, None
+        return native()
+    monkeypatch.setattr(engine, "_once", instrumented)
+    with pytest.warns(RuntimeWarning, match="falling back"):
+        outcome = monitor.sample(model=model, chains=2, progress=False)
+    assert native_tunes == [1000]
+    assert monitor.read_report(outcome)["effective_sampler"] == "pymc"
+    with pytest.warns(RuntimeWarning, match="falling back"):
+        with monitor.start(model=model, chains=2, tune=9, progress=False) as handle:
+            outcome = handle.wait(30)
+            assert handle.snapshot()["report"]["requested_sampler"] == "nutpie"
+    assert native_tunes == [1000, 9]
+    assert monitor.read_report(outcome)["effective_sampler"] == "pymc"
+
+
 def test_real_custom_native_step_and_zero_warmup():
     with pm.Model() as model:
         pm.Bernoulli("z", .5)

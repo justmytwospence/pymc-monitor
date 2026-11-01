@@ -1,7 +1,7 @@
 # SamplingResult { #pymc_monitor.SamplingResult }
 
 ```python
-SamplingResult(idata, report, effective_sampler=None)
+SamplingResult(idata, report, effective_sampler=None, requested_sampler=None)
 ```
 
 Generator return value: recovered inference data and its final report.

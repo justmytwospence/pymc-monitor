@@ -82,6 +82,7 @@ class SamplingResult:
     idata: object
     report: dict
     effective_sampler: str | None = None
+    requested_sampler: str | None = None
 
 
 @dataclass

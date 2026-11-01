@@ -138,12 +138,13 @@ def start(*, model=None, until=None, initial_strategy=None, progress=True, dashb
     request = resolve(model, sample_kwargs, nuts_sampler=nuts_sampler, until=until,
                       initial_strategy=initial_strategy, control=control)
     kwargs = {**request.settings["extra"], "draws": request.settings["draws"],
-              "tune": request.settings["tune"], "chains": request.chains,
-              "random_seed": request.settings["seed"]}
+              "chains": request.chains, "random_seed": request.settings["seed"]}
+    if not request.tune_default:
+        kwargs["tune"] = request.settings["tune"]
     return SamplingHandle(request.model, kwargs, until=request.target,
                           initial_strategy=request.initial_strategy,
                           progress=progress, dashboard=dashboard, control=request.control,
-                          on_event=on_event, nuts_sampler=request.sampler)
+                          on_event=on_event, nuts_sampler=nuts_sampler)
 
 
 def sample(*, model=None, until=None, initial_strategy=None, progress=True, dashboard=False,
@@ -179,6 +180,10 @@ def _normalize_cache_kwargs(model, *, until=None, initial_strategy=None, progres
                   "random_seed": request.settings["seed"], "until": request.target,
                   "initial_strategy": initial_strategy, "nuts_sampler": sampler}
     call_kwargs = dict(progress=progress, dashboard=dashboard, **key_kwargs)
+    if nuts_sampler is None:
+        call_kwargs["nuts_sampler"] = None
+    if request.tune_default:
+        call_kwargs.pop("tune")
     versions = {}
     packages = ["pymc-monitor", "pymc", "arviz", "pytensor", "numpy"]
     if sampler == "nutpie":
