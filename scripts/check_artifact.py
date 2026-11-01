@@ -17,6 +17,7 @@ for path in files:
             members = artifact.getnames()
     assert any("pymc_monitor/convergence.py" in member for member in members)
     assert any("pymc_monitor/server.py" in member for member in members)
+    assert any(member.endswith("pymc_monitor/py.typed") for member in members)
     if path.suffix != ".whl":
         assert any(member.endswith("docs/reference/index.qmd") for member in members)
     for asset in ("dashboard.html", "dashboard.js", "dashboard.css", "uPlot.iife.min.js",
